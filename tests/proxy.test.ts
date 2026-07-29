@@ -1,0 +1,251 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { startProxyServer, type RunningProxy } from "../src/proxy/server.js";
+import { generateProxyKey, hashProxyKey } from "../src/keys.js";
+import { OAuthError } from "../src/errors.js";
+import type { Logger, TokenProvider } from "../src/ports.js";
+import { stubHttp } from "./support/stubs.js";
+
+const KEY = generateProxyKey();
+const KEY_HASH = hashProxyKey(KEY);
+
+const silentLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+const staticTokens: TokenProvider = {
+  getAccessToken: async () => "oauth-token",
+};
+
+let running: RunningProxy | null = null;
+
+afterEach(async () => {
+  await running?.close();
+  running = null;
+});
+
+async function start(options: {
+  handler?: (request: Request) => Response | Promise<Response>;
+  tokens?: TokenProvider;
+  proxyKeyHash?: string | null;
+}) {
+  const http = stubHttp(
+    options.handler ?? (() => new Response("ok", { status: 200 })),
+  );
+
+  running = await startProxyServer(
+    {
+      tokens: options.tokens ?? staticTokens,
+      proxyKeyHash:
+        options.proxyKeyHash === undefined ? KEY_HASH : options.proxyKeyHash,
+      upstream: "https://api.anthropic.com",
+      logger: silentLogger,
+      http,
+    },
+    0,
+  );
+
+  return { http, url: `http://127.0.0.1:${running.port}` };
+}
+
+describe("proxy authentication", () => {
+  it("refuses an unauthenticated request", async () => {
+    const { url, http } = await start({});
+    const response = await fetch(`${url}/v1/messages`, { method: "POST" });
+
+    expect(response.status).toBe(401);
+    // Nothing reaches Anthropic before the caller proves who they are.
+    expect(http.requests).toHaveLength(0);
+  });
+
+  it("refuses a wrong key with the same message as a missing one", async () => {
+    const { url } = await start({});
+    const missing = await fetch(`${url}/v1/messages`, { method: "POST" });
+    const wrong = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": generateProxyKey() },
+    });
+
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toEqual(await missing.json());
+  });
+
+  it("shapes rejections like an Anthropic error, so SDKs parse them", async () => {
+    const { url } = await start({});
+    const response = await fetch(`${url}/v1/messages`, { method: "POST" });
+
+    expect(await response.json()).toEqual({
+      type: "error",
+      error: { type: "authentication_error", message: "Invalid proxy key." },
+    });
+  });
+
+  it("accepts the key as a bearer token too", async () => {
+    const { url } = await start({});
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}` },
+    });
+    expect(response.status).toBe(200);
+  });
+
+  it("refuses everything when no key has been minted", async () => {
+    const { url } = await start({ proxyKeyHash: null });
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+    });
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.message).toMatch(/cursor-proxy key/);
+  });
+
+  it("answers /healthz without a key", async () => {
+    const { url } = await start({});
+    const response = await fetch(`${url}/healthz`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ok" });
+  });
+});
+
+describe("proxy forwarding", () => {
+  it("preserves method, path and query against the upstream base", async () => {
+    const { url, http } = await start({});
+    await fetch(`${url}/v1/messages?beta=true`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: "{}",
+    });
+
+    const sent = http.requests[0]!;
+    expect(sent.url).toBe("https://api.anthropic.com/v1/messages?beta=true");
+    expect(sent.method).toBe("POST");
+  });
+
+  it("swaps the local proxy key for the OAuth bearer token", async () => {
+    const { url, http } = await start({});
+    await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+
+    const sent = http.requests[0]!;
+    expect(sent.headers.get("authorization")).toBe("Bearer oauth-token");
+    expect(sent.headers.get("x-api-key")).toBeNull();
+  });
+
+  it("forwards the request body", async () => {
+    const { url, http } = await start({});
+    await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude-opus-5" }),
+    });
+
+    expect(await http.requests[0]!.json()).toEqual({ model: "claude-opus-5" });
+  });
+
+  it("returns the upstream status and body unchanged", async () => {
+    const { url } = await start({
+      handler: () =>
+        new Response(JSON.stringify({ type: "error" }), {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            "anthropic-ratelimit-requests-remaining": "0",
+          },
+        }),
+    });
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("anthropic-ratelimit-requests-remaining")).toBe(
+      "0",
+    );
+  });
+
+  it("streams SSE chunks as they arrive instead of buffering the response", async () => {
+    let push: ((chunk: string) => void) | null = null;
+    let finish: (() => void) | null = null;
+
+    const { url } = await start({
+      handler: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const encoder = new TextEncoder();
+              push = (chunk) => controller.enqueue(encoder.encode(chunk));
+              finish = () => controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+
+    push!("event: message_start\n\n");
+    const firstRead = await reader.read();
+    // The first event is readable while the upstream stream is still open — a
+    // buffering proxy would block here until close().
+    expect(decoder.decode(firstRead.value)).toContain("message_start");
+
+    push!("event: message_stop\n\n");
+    const secondRead = await reader.read();
+    expect(decoder.decode(secondRead.value)).toContain("message_stop");
+
+    finish!();
+    expect((await reader.read()).done).toBe(true);
+  });
+
+  it("reports a login requirement as 401, not 502", async () => {
+    const { url } = await start({
+      tokens: {
+        getAccessToken: async () => {
+          throw new OAuthError("Not logged in.", "login_required");
+        },
+      },
+    });
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.message).toBe("Not logged in.");
+  });
+
+  it("reports an upstream transport failure as 502", async () => {
+    const { url } = await start({
+      handler: () => {
+        throw new Error("ECONNREFUSED");
+      },
+    });
+
+    const response = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(502);
+    // The upstream failure detail stays in the log, not in the client response.
+    expect(JSON.stringify(await response.json())).not.toContain("ECONNREFUSED");
+  });
+
+  it("binds loopback only", async () => {
+    const { url } = await start({});
+    expect(url).toContain("127.0.0.1");
+  });
+});
