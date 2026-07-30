@@ -19,7 +19,11 @@ export interface AuthorizationRequest {
   scope: string | null;
   state: string;
   codeChallenge: string;
+  /** Provider-specific extras, e.g. Google's `access_type=offline`. */
+  extraParams?: Record<string, string>;
 }
+
+export type TokenRequestFormat = OAuthConfig["tokenRequestFormat"];
 
 /**
  * Build the URL the user's browser is sent to.
@@ -36,6 +40,13 @@ export function buildAuthorizationUrl(request: AuthorizationRequest): string {
   url.searchParams.set("code_challenge", request.codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
   if (request.scope) url.searchParams.set("scope", request.scope);
+
+  // Set last, but the protocol parameters above are never overwritten: an
+  // extra named `state` or `redirect_uri` would silently break the flow.
+  for (const [name, value] of Object.entries(request.extraParams ?? {})) {
+    if (!url.searchParams.has(name)) url.searchParams.set(name, value);
+  }
+
   return url.toString();
 }
 
@@ -83,41 +94,58 @@ interface DiscoveryDocument {
   token_endpoint?: string;
 }
 
+/**
+ * Where metadata lives, in the order we try.
+ *
+ * RFC 8414's path comes first, but plain OpenID providers — Google among them —
+ * publish only the OIDC path, so trying just the first would fail against the
+ * most common issuers.
+ */
+const DISCOVERY_PATHS = [
+  ".well-known/oauth-authorization-server",
+  ".well-known/openid-configuration",
+] as const;
+
 async function discover(
   issuer: string,
   http: HttpClient,
 ): Promise<DiscoveryDocument> {
-  const url = new URL(
-    ".well-known/oauth-authorization-server",
-    issuer.endsWith("/") ? issuer : `${issuer}/`,
-  );
+  const base = issuer.endsWith("/") ? issuer : `${issuer}/`;
+  const failures: string[] = [];
 
-  const response = await http.send(
-    new Request(url, { headers: { accept: "application/json" } }),
-  );
-  if (!response.ok) {
-    throw new OAuthError(
-      `Discovery failed for ${issuer}: HTTP ${response.status}.`,
-      "discovery_failed",
+  for (const path of DISCOVERY_PATHS) {
+    const url = new URL(path, base);
+    const response = await http.send(
+      new Request(url, { headers: { accept: "application/json" } }),
     );
+
+    if (!response.ok) {
+      failures.push(`${url.toString()} → HTTP ${response.status}`);
+      continue;
+    }
+
+    try {
+      return (await response.json()) as DiscoveryDocument;
+    } catch {
+      failures.push(`${url.toString()} → not valid JSON`);
+    }
   }
 
-  try {
-    return (await response.json()) as DiscoveryDocument;
-  } catch {
-    throw new OAuthError(
-      `Discovery document at ${url.toString()} was not valid JSON.`,
-      "discovery_failed",
-    );
-  }
+  throw new OAuthError(
+    `Discovery failed for ${issuer}: ${failures.join("; ")}.`,
+    "discovery_failed",
+  );
 }
 
 export interface ExchangeRequest {
   tokenEndpoint: string;
   clientId: string;
+  clientSecret?: string | null;
   code: string;
   codeVerifier: string;
   redirectUri: string;
+  state?: string | null;
+  tokenRequestFormat?: TokenRequestFormat;
 }
 
 /** Trade an authorization code for tokens. */
@@ -126,14 +154,23 @@ export async function exchangeCode(
   http: HttpClient,
   clock: Clock,
 ): Promise<Credentials> {
-  const body = new URLSearchParams({
+  const body = {
     grant_type: "authorization_code",
     client_id: request.clientId,
     code: request.code,
     code_verifier: request.codeVerifier,
     redirect_uri: request.redirectUri,
-  });
-  return postToken(request.tokenEndpoint, body, http, clock, null);
+    ...(request.state ? { state: request.state } : {}),
+    ...(request.clientSecret ? { client_secret: request.clientSecret } : {}),
+  };
+  return postToken(
+    request.tokenEndpoint,
+    body,
+    request.tokenRequestFormat ?? "form",
+    http,
+    clock,
+    null,
+  );
 }
 
 /**
@@ -147,19 +184,23 @@ export async function refreshTokens(
   options: {
     tokenEndpoint: string;
     clientId: string;
+    clientSecret?: string | null;
     refreshToken: string;
+    tokenRequestFormat?: TokenRequestFormat;
   },
   http: HttpClient,
   clock: Clock,
 ): Promise<Credentials> {
-  const body = new URLSearchParams({
+  const body = {
     grant_type: "refresh_token",
     client_id: options.clientId,
     refresh_token: options.refreshToken,
-  });
+    ...(options.clientSecret ? { client_secret: options.clientSecret } : {}),
+  };
   return postToken(
     options.tokenEndpoint,
     body,
+    options.tokenRequestFormat ?? "form",
     http,
     clock,
     options.refreshToken,
@@ -176,19 +217,27 @@ interface TokenResponse {
 
 async function postToken(
   tokenEndpoint: string,
-  body: URLSearchParams,
+  body: Record<string, string>,
+  format: TokenRequestFormat,
   http: HttpClient,
   clock: Clock,
   previousRefreshToken: string | null,
 ): Promise<Credentials> {
+  const requestBody =
+    format === "json" ? JSON.stringify(body) : new URLSearchParams(body).toString();
+  const contentType =
+    format === "json"
+      ? "application/json"
+      : "application/x-www-form-urlencoded";
+
   const response = await http.send(
     new Request(tokenEndpoint, {
       method: "POST",
       headers: {
-        "content-type": "application/x-www-form-urlencoded",
+        "content-type": contentType,
         accept: "application/json",
       },
-      body: body.toString(),
+      body: requestBody,
     }),
   );
 

@@ -3,6 +3,7 @@ import type {
   CredentialStore,
   Credentials,
   HttpClient,
+  OAuthConfig,
   TokenProvider,
 } from "../ports.js";
 import { OAuthError } from "../errors.js";
@@ -25,7 +26,9 @@ export interface RefreshingTokenProviderOptions {
   http: HttpClient;
   clock: Clock;
   clientId: string;
+  clientSecret?: string | null;
   tokenEndpoint: string;
+  tokenRequestFormat: OAuthConfig["tokenRequestFormat"];
 }
 
 export class RefreshingTokenProvider implements TokenProvider {
@@ -52,7 +55,7 @@ export class RefreshingTokenProvider implements TokenProvider {
     const loaded = await this.options.store.load();
     if (!loaded) {
       throw new OAuthError(
-        "Not logged in. Run `cursor-proxy login` first.",
+        "Not logged in. Run `cursor-proxy import-claude-code` or `cursor-proxy login` first.",
         "login_required",
       );
     }
@@ -65,7 +68,7 @@ export class RefreshingTokenProvider implements TokenProvider {
 
     if (!current.refreshToken) {
       throw new OAuthError(
-        "Access token expired and no refresh token is available. Run `cursor-proxy login` again.",
+        "Access token expired and no refresh token is available. Run `cursor-proxy import-claude-code` or `cursor-proxy login` again.",
         "login_required",
       );
     }
@@ -86,7 +89,9 @@ export class RefreshingTokenProvider implements TokenProvider {
         {
           tokenEndpoint: this.options.tokenEndpoint,
           clientId: this.options.clientId,
+          clientSecret: this.options.clientSecret ?? null,
           refreshToken,
+          tokenRequestFormat: this.options.tokenRequestFormat,
         },
         this.options.http,
         this.options.clock,
@@ -99,7 +104,7 @@ export class RefreshingTokenProvider implements TokenProvider {
         this.cached = null;
         await this.options.store.clear();
         throw new OAuthError(
-          "Session expired. Run `cursor-proxy login` again.",
+          "Session expired. Run `cursor-proxy import-claude-code` or `cursor-proxy login` again.",
           "login_required",
         );
       }

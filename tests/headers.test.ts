@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  OAUTH_BETA,
+  DEFAULT_ANTHROPIC_VERSION,
+  OAUTH_BETA_HEADER,
   buildDownstreamHeaders,
   buildUpstreamHeaders,
   extractProxyKey,
-  mergeBeta,
 } from "../src/proxy/headers.js";
 
 describe("extractProxyKey", () => {
@@ -31,13 +31,13 @@ describe("extractProxyKey", () => {
 });
 
 describe("buildUpstreamHeaders", () => {
-  it("replaces the client's credential with our bearer token", () => {
+  it("replaces the client's credential with the OAuth bearer token", () => {
     const headers = buildUpstreamHeaders(
       { "x-api-key": "cpx_local", authorization: "Bearer cpx_local" },
-      "oauth-token",
+      "oauth-access-token",
     );
-    expect(headers.get("authorization")).toBe("Bearer oauth-token");
-    expect(headers.has("x-api-key")).toBe(false);
+    expect(headers.get("x-api-key")).toBeNull();
+    expect(headers.get("authorization")).toBe("Bearer oauth-access-token");
   });
 
   it("never forwards the local proxy key upstream", () => {
@@ -81,27 +81,42 @@ describe("buildUpstreamHeaders", () => {
     expect(headers.get("content-type")).toBe("application/json");
   });
 
-  it("always adds the OAuth beta", () => {
+  it("supplies anthropic-version when the client omits it", () => {
     const headers = buildUpstreamHeaders({}, "token");
-    expect(headers.get("anthropic-beta")).toBe(OAUTH_BETA);
+    expect(headers.get("anthropic-version")).toBe(DEFAULT_ANTHROPIC_VERSION);
   });
-});
 
-describe("mergeBeta", () => {
-  it("keeps the client's betas and prepends ours", () => {
-    expect(mergeBeta("computer-use-2024-10-22")).toBe(
-      `${OAUTH_BETA},computer-use-2024-10-22`,
+  it("does not override the client's anthropic-version", () => {
+    const headers = buildUpstreamHeaders(
+      { "anthropic-version": "2099-01-01" },
+      "token",
+    );
+    expect(headers.get("anthropic-version")).toBe("2099-01-01");
+  });
+
+  it("forwards the client's betas untouched", () => {
+    const headers = buildUpstreamHeaders(
+      { "anthropic-beta": "computer-use-2024-10-22" },
+      "token",
+    );
+    expect(headers.get("anthropic-beta")).toBe(
+      `computer-use-2024-10-22,${OAUTH_BETA_HEADER}`,
     );
   });
 
-  it("does not duplicate ours when the client already sent it", () => {
-    expect(mergeBeta(`${OAUTH_BETA},other`)).toBe(`${OAUTH_BETA},other`);
+  it("adds the Anthropic OAuth beta when the client sends none", () => {
+    const headers = buildUpstreamHeaders({}, "token");
+    expect(headers.get("anthropic-beta")).toBe(OAUTH_BETA_HEADER);
   });
 
-  it("tolerates spacing and empty entries", () => {
-    expect(mergeBeta("  a , , b ")).toBe(`${OAUTH_BETA},a,b`);
-    expect(mergeBeta("")).toBe(OAUTH_BETA);
-    expect(mergeBeta(undefined)).toBe(OAUTH_BETA);
+  it("does not duplicate the Anthropic OAuth beta", () => {
+    const headers = buildUpstreamHeaders(
+      { "anthropic-beta": `${OAUTH_BETA_HEADER},computer-use-2024-10-22` },
+      "token",
+    );
+    expect(headers.get("anthropic-beta")).toBe(
+      `${OAUTH_BETA_HEADER},computer-use-2024-10-22`,
+    );
   });
 });
 

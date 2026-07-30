@@ -17,9 +17,33 @@ export interface OAuthConfig {
   issuer: string | null;
   authorizationEndpoint: string | null;
   tokenEndpoint: string | null;
+  /**
+   * Redirect URI sent to the authorization server.
+   *
+   * When null, login uses a temporary localhost loopback receiver. Providers
+   * such as Claude Code use a fixed web callback that displays a code to paste
+   * back into the CLI instead.
+   */
+  redirectUri: string | null;
   /** No default ships with this package. Supplied by the user at runtime. */
   clientId: string | null;
+  /**
+   * Sent to the token endpoint when present.
+   *
+   * PKCE makes this unnecessary in principle, but some OAuth providers still
+   * require a client secret during the token exchange.
+   */
+  clientSecret: string | null;
   scope: string | null;
+  /**
+   * Extra authorization-URL parameters, provider-specific.
+   *
+   * Some providers need an explicit offline-access parameter or they return no
+   * refresh token, which turns every token expiry into a manual re-login.
+   */
+  authParams: Record<string, string>;
+  /** Token endpoint payload shape. Standard OAuth uses form; Claude uses JSON. */
+  tokenRequestFormat: "form" | "json";
 }
 
 export interface Config {
@@ -65,6 +89,10 @@ export interface HttpClient {
 
 export interface Browser {
   open(url: string): Promise<void>;
+}
+
+export interface Prompt {
+  readLine(message: string): Promise<string>;
 }
 
 export interface Logger {

@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import type { Config, ConfigStore } from "./ports.js";
+import type { Config, ConfigStore, OAuthConfig } from "./ports.js";
 import { ConfigError } from "./errors.js";
 
 const DIR_MODE = 0o700;
@@ -11,14 +11,37 @@ const FILE_MODE = 0o600;
 export const DEFAULT_PORT = 8787;
 export const DEFAULT_UPSTREAM = "https://api.anthropic.com";
 
+export const CLAUDE_CODE_OAUTH_PRESET = {
+  authorizationEndpoint: "https://claude.ai/oauth/authorize",
+  tokenEndpoint: "https://platform.claude.com/v1/oauth/token",
+  redirectUri: null,
+  clientId: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+  scope: "user:profile user:inference",
+  authParams: {},
+  tokenRequestFormat: "json",
+} as const satisfies Pick<
+  OAuthConfig,
+  | "authorizationEndpoint"
+  | "tokenEndpoint"
+  | "redirectUri"
+  | "clientId"
+  | "scope"
+  | "authParams"
+  | "tokenRequestFormat"
+>;
+
 export function defaultConfig(): Config {
   return {
     oauth: {
       issuer: null,
       authorizationEndpoint: null,
       tokenEndpoint: null,
+      redirectUri: null,
       clientId: null,
+      clientSecret: null,
       scope: null,
+      authParams: {},
+      tokenRequestFormat: "form",
     },
     proxyKeyHash: null,
     port: DEFAULT_PORT,
@@ -26,13 +49,41 @@ export function defaultConfig(): Config {
   };
 }
 
+export const CLAUDE_CODE_MANUAL_REDIRECT_URI =
+  "https://platform.claude.com/oauth/code/callback";
+
+export function applyClaudeCodePreset(
+  config: Config,
+  options: { manual?: boolean } = {},
+): Config {
+  return {
+    ...config,
+    oauth: {
+      ...config.oauth,
+      issuer: null,
+      clientSecret: null,
+      ...CLAUDE_CODE_OAUTH_PRESET,
+      ...(options.manual
+        ? {
+            redirectUri: CLAUDE_CODE_MANUAL_REDIRECT_URI,
+            authParams: { code: "true" },
+          }
+        : {}),
+    },
+  };
+}
+
 /** Maps each overridable setting to its environment variable. */
 export const ENV_VARS = {
   clientId: "CURSOR_PROXY_CLIENT_ID",
+  clientSecret: "CURSOR_PROXY_CLIENT_SECRET",
   issuer: "CURSOR_PROXY_ISSUER",
   authorizationEndpoint: "CURSOR_PROXY_AUTH_ENDPOINT",
   tokenEndpoint: "CURSOR_PROXY_TOKEN_ENDPOINT",
+  redirectUri: "CURSOR_PROXY_REDIRECT_URI",
   scope: "CURSOR_PROXY_SCOPE",
+  authParams: "CURSOR_PROXY_AUTH_PARAMS",
+  tokenRequestFormat: "CURSOR_PROXY_TOKEN_FORMAT",
   port: "CURSOR_PROXY_PORT",
   upstream: "CURSOR_PROXY_UPSTREAM",
 } as const;
@@ -53,6 +104,10 @@ export function applyEnvOverrides(
   };
 
   const port = parsePort(env[ENV_VARS.port], config.port);
+  const authParams = parseAuthParams(
+    env[ENV_VARS.authParams],
+    config.oauth.authParams,
+  );
 
   return {
     oauth: {
@@ -62,13 +117,74 @@ export function applyEnvOverrides(
         config.oauth.authorizationEndpoint,
       ),
       tokenEndpoint: pick(ENV_VARS.tokenEndpoint, config.oauth.tokenEndpoint),
+      redirectUri: pick(ENV_VARS.redirectUri, config.oauth.redirectUri),
       clientId: pick(ENV_VARS.clientId, config.oauth.clientId),
+      clientSecret: pick(ENV_VARS.clientSecret, config.oauth.clientSecret),
       scope: pick(ENV_VARS.scope, config.oauth.scope),
+      authParams,
+      tokenRequestFormat: parseTokenRequestFormat(
+        env[ENV_VARS.tokenRequestFormat],
+        config.oauth.tokenRequestFormat,
+      ),
     },
     proxyKeyHash: config.proxyKeyHash,
     port,
     upstream: pick(ENV_VARS.upstream, config.upstream) ?? DEFAULT_UPSTREAM,
   };
+}
+
+function parseTokenRequestFormat(
+  raw: string | undefined,
+  fallback: OAuthConfig["tokenRequestFormat"],
+): OAuthConfig["tokenRequestFormat"] {
+  if (raw === undefined || raw === "") return fallback;
+  if (raw === "form" || raw === "json") return raw;
+  throw new ConfigError(
+    `Invalid token request format "${raw}" — expected "form" or "json".`,
+    "oauth.tokenRequestFormat",
+    ENV_VARS.tokenRequestFormat,
+  );
+}
+
+function parseAuthParams(
+  raw: string | undefined,
+  fallback: Record<string, string>,
+): Record<string, string> {
+  if (raw === undefined || raw === "") return fallback;
+
+  if (raw.trim().startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new Error("not an object");
+      }
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).map(([key, value]) => {
+          if (typeof value !== "string") {
+            throw new Error(`value for ${key} is not a string`);
+          }
+          return [key, value];
+        }),
+      );
+    } catch {
+      throw new ConfigError(
+        `Invalid auth params "${raw}" — expected JSON object or query string.`,
+        "oauth.authParams",
+        ENV_VARS.authParams,
+      );
+    }
+  }
+
+  const params = new URLSearchParams(raw);
+  const entries = [...params.entries()];
+  if (entries.length === 0) {
+    throw new ConfigError(
+      `Invalid auth params "${raw}" — expected JSON object or query string.`,
+      "oauth.authParams",
+      ENV_VARS.authParams,
+    );
+  }
+  return Object.fromEntries(entries);
 }
 
 function parsePort(raw: string | undefined, fallback: number): number {
@@ -87,9 +203,9 @@ function parsePort(raw: string | undefined, fallback: number): number {
 /**
  * Reads the OAuth client id, or explains precisely what is missing.
  *
- * This package ships no client id. Guessing one — or silently falling back to
- * a known public identifier — would send the user's credentials somewhere they
- * did not choose, so absence is a hard error.
+ * This package ships no Anthropic OAuth client id. Guessing one, or silently
+ * falling back to a known public identifier, would send the user's credentials
+ * somewhere they did not choose, so absence is a hard error.
  */
 export function requireClientId(config: Config): string {
   if (!config.oauth.clientId) {
@@ -147,7 +263,13 @@ function mergeWithDefaults(parsed: unknown): Config {
   if (typeof parsed !== "object" || parsed === null) return base;
 
   const source = parsed as Partial<Config>;
-  const oauth = source.oauth ?? {};
+  // Drop explicit nulls/undefined so a key present-but-empty in an older file
+  // does not blank out a default that now carries a real value.
+  const oauth = Object.fromEntries(
+    Object.entries(source.oauth ?? {}).filter(
+      ([, value]) => value !== undefined && value !== null,
+    ),
+  ) as Partial<OAuthConfig>;
 
   return {
     oauth: { ...base.oauth, ...oauth },

@@ -7,8 +7,14 @@ import type { IncomingHttpHeaders } from "node:http";
  * leaks at all, so it is kept free of sockets and exhaustively testable.
  */
 
-/** Beta required for OAuth-authenticated access. */
-export const OAUTH_BETA = "oauth-2025-04-20";
+/**
+ * Applied only when the caller sends no `anthropic-version`.
+ *
+ * The Anthropic API rejects a request without it, and some OpenAI-compatible
+ * clients pointed at this proxy never send one.
+ */
+export const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
+export const OAUTH_BETA_HEADER = "oauth-2025-04-20";
 
 /**
  * Headers that describe *this* hop and must never be forwarded (RFC 9110 §7.6.1),
@@ -32,8 +38,8 @@ const HOP_BY_HOP = new Set([
  * Client credentials, dropped before forwarding.
  *
  * The inbound key authenticates the caller *to this proxy*; sending it upstream
- * would leak a local secret to Anthropic and, worse, `x-api-key` would take
- * precedence over our OAuth bearer and fail the request.
+ * would leak a local secret to Anthropic and could overwrite the real upstream
+ * OAuth credential.
  */
 const CLIENT_CREDENTIALS = new Set(["x-api-key", "authorization", "cookie"]);
 
@@ -61,7 +67,7 @@ export function extractProxyKey(headers: IncomingHttpHeaders): string | null {
  * Build the header set for the upstream request.
  *
  * Order matters: client credentials are dropped first, then ours is set, so no
- * inbound header can overwrite the bearer token.
+ * inbound header can overwrite the OAuth bearer token.
  */
 export function buildUpstreamHeaders(
   inbound: IncomingHttpHeaders,
@@ -80,25 +86,15 @@ export function buildUpstreamHeaders(
   }
 
   headers.set("authorization", `Bearer ${accessToken}`);
-  headers.set("anthropic-beta", mergeBeta(first(inbound["anthropic-beta"])));
+  if (!headers.has("anthropic-version")) {
+    headers.set("anthropic-version", DEFAULT_ANTHROPIC_VERSION);
+  }
+  headers.set(
+    "anthropic-beta",
+    mergeAnthropicBeta(headers.get("anthropic-beta")),
+  );
 
   return headers;
-}
-
-/**
- * Add the OAuth beta to whatever betas the client asked for.
- *
- * Replacing the client's list instead of merging would silently disable
- * features the caller depends on.
- */
-export function mergeBeta(inbound: string | undefined): string {
-  const values = (inbound ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter((value) => value !== "");
-
-  if (!values.includes(OAUTH_BETA)) values.unshift(OAUTH_BETA);
-  return values.join(",");
 }
 
 /**
@@ -129,4 +125,15 @@ export function buildDownstreamHeaders(
 function first(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
+}
+
+function mergeAnthropicBeta(existing: string | null): string {
+  const values = new Set(
+    (existing ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  values.add(OAUTH_BETA_HEADER);
+  return [...values].join(",");
 }

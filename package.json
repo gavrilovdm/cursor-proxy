@@ -1,7 +1,7 @@
 {
   "name": "cursor-proxy",
   "version": "0.1.0",
-  "description": "Local OAuth-backed proxy that lets API-key clients use an Anthropic OAuth session.",
+  "description": "Local OpenAI-compatible proxy that forwards Cursor chat to Anthropic using a Claude Code OAuth session.",
   "type": "module",
   "license": "MIT",
   "engines": {

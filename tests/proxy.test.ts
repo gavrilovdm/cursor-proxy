@@ -11,7 +11,7 @@ const KEY_HASH = hashProxyKey(KEY);
 const silentLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
 const staticTokens: TokenProvider = {
-  getAccessToken: async () => "oauth-token",
+  getAccessToken: async () => "anthropic-oauth-token",
 };
 
 let running: RunningProxy | null = null;
@@ -119,7 +119,7 @@ describe("proxy forwarding", () => {
     expect(sent.method).toBe("POST");
   });
 
-  it("swaps the local proxy key for the OAuth bearer token", async () => {
+  it("swaps the local proxy key for the Anthropic OAuth token", async () => {
     const { url, http } = await start({});
     await fetch(`${url}/v1/messages`, {
       method: "POST",
@@ -128,8 +128,25 @@ describe("proxy forwarding", () => {
     });
 
     const sent = http.requests[0]!;
-    expect(sent.headers.get("authorization")).toBe("Bearer oauth-token");
     expect(sent.headers.get("x-api-key")).toBeNull();
+    expect(sent.headers.get("authorization")).toBe(
+      "Bearer anthropic-oauth-token",
+    );
+  });
+
+  it("sends only the upstream OAuth token, not the local proxy key", async () => {
+    const { url, http } = await start({});
+    await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "x-api-key": KEY },
+      body: "{}",
+    });
+
+    const sent = http.requests[0]!;
+    expect([...sent.headers.values()].join(" ")).not.toContain(KEY);
+    expect(sent.headers.get("authorization")).toBe(
+      "Bearer anthropic-oauth-token",
+    );
   });
 
   it("forwards the request body", async () => {
@@ -242,6 +259,170 @@ describe("proxy forwarding", () => {
     expect(response.status).toBe(502);
     // The upstream failure detail stays in the log, not in the client response.
     expect(JSON.stringify(await response.json())).not.toContain("ECONNREFUSED");
+  });
+
+  it("adapts OpenAI chat completions to Anthropic messages", async () => {
+    const { url, http } = await start({
+      handler: async (request) => {
+        expect(request.url).toBe("https://api.anthropic.com/v1/messages");
+        expect(request.headers.get("authorization")).toBe(
+          "Bearer anthropic-oauth-token",
+        );
+        expect(request.headers.get("x-api-key")).toBeNull();
+        expect(await request.json()).toMatchObject({
+          model: "claude-opus-5",
+          max_tokens: 32,
+          system:
+            "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;\n\nYou are concise.",
+          messages: [
+            { role: "user", content: [{ type: "text", text: "ping" }] },
+          ],
+        });
+        return new Response(
+          JSON.stringify({
+            id: "msg_123",
+            model: "claude-opus-5",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "pong" }],
+            usage: { input_tokens: 3, output_tokens: 2 },
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-opus-5",
+        max_tokens: 32,
+        messages: [
+          { role: "system", content: "You are concise." },
+          { role: "user", content: "ping" },
+        ],
+      }),
+    });
+
+    expect(http.requests).toHaveLength(1);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      object: "chat.completion",
+      model: "claude-opus-5",
+      choices: [
+        {
+          message: { role: "assistant", content: "pong" },
+          finish_reason: "end_turn",
+        },
+      ],
+      usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+    });
+  });
+
+  it("accepts OpenAI chat completions without the /v1 prefix", async () => {
+    const { url, http } = await start({
+      handler: async (request) => {
+        expect(request.url).toBe("https://api.anthropic.com/v1/messages");
+        return new Response(
+          JSON.stringify({
+            id: "msg_bare_path",
+            content: [{ type: "text", text: "pong" }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await fetch(`${url}/chat/completions`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "cpxopus",
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+
+    expect(http.requests).toHaveLength(1);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      model: "cpxopus",
+      choices: [{ message: { content: "pong" } }],
+    });
+  });
+
+  it("resolves a model alias upstream but echoes the requested name", async () => {
+    const { url } = await start({
+      handler: async (request) => {
+        expect(await request.json()).toMatchObject({
+          model: "claude-haiku-4-5-20251001",
+        });
+        return new Response(
+          JSON.stringify({
+            id: "msg_alias",
+            model: "claude-haiku-4-5-20251001",
+            content: [{ type: "text", text: "pong" }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "cpxhaiku",
+        messages: [{ role: "user", content: "ping" }],
+      }),
+    });
+
+    // A client that routes on the model name must not see a Claude-shaped id.
+    await expect(response.json()).resolves.toMatchObject({ model: "cpxhaiku" });
+  });
+
+  it("advertises aliases alongside the upstream model list", async () => {
+    const { url } = await start({
+      handler: () =>
+        new Response(
+          JSON.stringify({
+            data: [{ type: "model", id: "claude-opus-5" }],
+            has_more: false,
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+
+    const response = await fetch(`${url}/v1/models`, {
+      headers: { "x-api-key": KEY },
+    });
+    const body = (await response.json()) as {
+      data: Array<{ id: string }>;
+      has_more: boolean;
+    };
+    const ids = body.data.map((model) => model.id);
+
+    expect(ids).toContain("claude-opus-5");
+    expect(ids).toContain("cpxhaiku");
+    expect(body.has_more).toBe(false);
+  });
+
+  it("accepts the model list without the /v1 prefix", async () => {
+    const { url } = await start({
+      handler: (request) => {
+        expect(request.url).toBe("https://api.anthropic.com/v1/models");
+        return new Response(JSON.stringify({ data: [] }), {
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const response = await fetch(`${url}/models`, {
+      headers: { "x-api-key": KEY },
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data.map((model) => model.id)).toContain("cpxopus");
   });
 
   it("binds loopback only", async () => {

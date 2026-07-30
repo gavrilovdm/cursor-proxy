@@ -48,6 +48,21 @@ describe("buildAuthorizationUrl", () => {
   it("never sends the verifier, only its challenge", () => {
     expect(buildAuthorizationUrl(request)).not.toContain("code_verifier");
   });
+
+  it("keeps protocol parameters while adding provider-specific extras", () => {
+    const url = buildAuthorizationUrl({
+      ...request,
+      extraParams: {
+        code: "true",
+        client_id: "attacker",
+        redirect_uri: "https://attacker.example/callback",
+      },
+    });
+    const params = new URL(url).searchParams;
+    expect(params.get("code")).toBe("true");
+    expect(params.get("client_id")).toBe("client-123");
+    expect(params.get("redirect_uri")).toBe(request.redirectUri);
+  });
 });
 
 describe("resolveEndpoints", () => {
@@ -159,6 +174,37 @@ describe("exchangeCode", () => {
     expect(body.has("client_secret")).toBe(false);
   });
 
+  it("can post the authorization code as JSON for Claude-style providers", async () => {
+    const http = stubHttp(() =>
+      jsonResponse({
+        access_token: "at",
+        refresh_token: "rt",
+        expires_in: 3600,
+      }),
+    );
+
+    await exchangeCode(
+      {
+        ...request,
+        state: "state-abc",
+        tokenRequestFormat: "json",
+      },
+      http,
+      fakeClock(),
+    );
+
+    const sent = http.requests[0]!;
+    expect(sent.headers.get("content-type")).toBe("application/json");
+    expect(await sent.json()).toEqual({
+      grant_type: "authorization_code",
+      client_id: "client-123",
+      code: "auth-code",
+      code_verifier: "verifier-abc",
+      redirect_uri: request.redirectUri,
+      state: "state-abc",
+    });
+  });
+
   it("converts expires_in into an absolute deadline on our clock", async () => {
     const clock = fakeClock(1_000_000);
     const http = stubHttp(() =>
@@ -222,6 +268,26 @@ describe("refreshTokens", () => {
     const body = new URLSearchParams(await http.requests[0]!.text());
     expect(body.get("grant_type")).toBe("refresh_token");
     expect(body.get("refresh_token")).toBe("rt-old");
+  });
+
+  it("can refresh with a JSON body", async () => {
+    const http = stubHttp(() =>
+      jsonResponse({ access_token: "at-new", expires_in: 60 }),
+    );
+    await refreshTokens(
+      { ...options, tokenRequestFormat: "json" },
+      http,
+      fakeClock(),
+    );
+
+    expect(http.requests[0]!.headers.get("content-type")).toBe(
+      "application/json",
+    );
+    expect(await http.requests[0]!.json()).toEqual({
+      grant_type: "refresh_token",
+      client_id: "client-123",
+      refresh_token: "rt-old",
+    });
   });
 
   it("keeps the old refresh token when the provider does not rotate it", async () => {

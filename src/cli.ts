@@ -3,8 +3,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { ConfigError, OAuthError } from "./errors.js";
-import { FileConfigStore, requireClientId } from "./config.js";
+import {
+  applyClaudeCodePreset,
+  FileConfigStore,
+  requireClientId,
+} from "./config.js";
 import { generateProxyKey, hashProxyKey } from "./keys.js";
+import { loadClaudeCodeCredentialsFromKeychain } from "./auth/claude-code.js";
 import { FileCredentialStore } from "./auth/credentials.js";
 import { login, logout } from "./auth/login.js";
 import { resolveEndpoints } from "./auth/oauth.js";
@@ -13,7 +18,12 @@ import {
   systemClock,
 } from "./auth/token-provider.js";
 import { startProxyServer } from "./proxy/server.js";
-import { consoleLogger, fetchHttpClient, systemBrowser } from "./adapters.js";
+import {
+  consoleLogger,
+  fetchHttpClient,
+  systemBrowser,
+  systemPrompt,
+} from "./adapters.js";
 import type { Config } from "./ports.js";
 
 /**
@@ -34,13 +44,13 @@ const program = new Command();
 program
   .name("cursor-proxy")
   .description(
-    "Local proxy that lets API-key clients use an Anthropic OAuth session.",
+    "Local Anthropic proxy backed by an OAuth session.",
   )
   .version("0.1.0");
 
 program
   .command("login")
-  .description("Authorize with your Anthropic account in a browser.")
+  .description("Sign in to the configured OAuth provider in a browser.")
   .option("--port <number>", "fixed loopback port for the redirect URI", toPort)
   .option("--timeout <seconds>", "how long to wait for the browser", toPositive)
   .action(async (options: { port?: number; timeout?: number }) => {
@@ -51,6 +61,7 @@ program
         http: fetchHttpClient,
         clock: systemClock,
         browser: systemBrowser,
+        prompt: systemPrompt,
         logger: consoleLogger,
         credentials: credentialStore,
       },
@@ -62,16 +73,76 @@ program
       },
     );
     consoleLogger.info(
-      `Logged in. Access token expires ${new Date(credentials.expiresAt).toLocaleString()}.`,
+      `Signed in. Session expires ${new Date(credentials.expiresAt).toLocaleString()}.`,
     );
+    if (!credentials.refreshToken) {
+      consoleLogger.warn(
+        "The provider returned no refresh token. The proxy will require another browser login when this access token expires.",
+      );
+    }
   });
 
 program
   .command("logout")
-  .description("Delete the stored tokens from this machine.")
+  .description("Delete the stored OAuth session from this machine.")
   .action(async () => {
     await logout(credentialStore);
     consoleLogger.info("Stored credentials deleted.");
+  });
+
+program
+  .command("configure")
+  .description("Write a provider preset to the local config.")
+  .argument("<provider>", "currently supported: claude-code")
+  .option("--manual", "use Claude's copy/paste code flow instead of localhost callback")
+  .action(async (provider: string, options: { manual?: boolean }) => {
+    if (provider !== "claude-code") {
+      throw new ConfigError(
+        `Unknown provider preset "${provider}". Use "claude-code".`,
+        "oauth",
+        "—",
+      );
+    }
+
+    const config = await configStore.load();
+    await configStore.save(
+      applyClaudeCodePreset(config, { manual: options.manual ?? false }),
+    );
+    consoleLogger.info(
+      `Claude Code OAuth preset written to ${BASE_DIR}/config.json.`,
+    );
+    if (options.manual) {
+      consoleLogger.info(
+        "Run `cursor-proxy login` again; the authorize URL should include code=true and the platform callback redirect.",
+      );
+    } else {
+      consoleLogger.info(
+        "Run `cursor-proxy login` again; the authorize URL should use a localhost callback and no code=true parameter.",
+      );
+    }
+  });
+
+program
+  .command("import-claude-code")
+  .description("Import the signed-in Claude Code OAuth session from macOS Keychain.")
+  .option(
+    "--service <name>",
+    "Keychain service name",
+    "Claude Code-credentials",
+  )
+  .action(async (options: { service: string }) => {
+    const credentials = await loadClaudeCodeCredentialsFromKeychain(
+      options.service,
+    );
+    const config = await configStore.load();
+    await configStore.save(applyClaudeCodePreset(config));
+    await credentialStore.save(credentials);
+    consoleLogger.info(
+      `Imported Claude Code OAuth credentials into ${BASE_DIR}/credentials.json.`,
+    );
+    consoleLogger.info(
+      `Session expires ${new Date(credentials.expiresAt).toLocaleString()}.`,
+    );
   });
 
 program
@@ -113,6 +184,13 @@ program
     const report = {
       configDir: BASE_DIR,
       clientIdConfigured: config.oauth.clientId !== null,
+      clientSecretConfigured: config.oauth.clientSecret !== null,
+      authorizationEndpoint: config.oauth.authorizationEndpoint,
+      tokenEndpoint: config.oauth.tokenEndpoint,
+      redirectUri: config.oauth.redirectUri,
+      scope: config.oauth.scope,
+      tokenRequestFormat: config.oauth.tokenRequestFormat,
+      authParams: config.oauth.authParams,
       proxyKeyConfigured: config.proxyKeyHash !== null,
       loggedIn: credentials !== null,
       accessTokenExpiresAt: credentials
@@ -152,17 +230,19 @@ async function runProxy(
     http: fetchHttpClient,
     clock: systemClock,
     clientId,
+    clientSecret: config.oauth.clientSecret,
     tokenEndpoint: endpoints.tokenEndpoint,
+    tokenRequestFormat: config.oauth.tokenRequestFormat,
   });
 
   // Fail at startup rather than on the first request: a proxy that accepts a
-  // connection and only then reports "not logged in" is much harder to debug.
+  // connection and only then reports "not signed in" is much harder to debug.
   await tokens.getAccessToken();
 
   const host = options.host ?? "127.0.0.1";
   if (host !== "127.0.0.1" && host !== "localhost") {
     consoleLogger.warn(
-      `Binding ${host}: anyone who can reach this port can spend your Anthropic session.`,
+      `Binding ${host}: anyone who can reach this port and holds the proxy key can use your Anthropic OAuth session.`,
     );
   }
 

@@ -56,6 +56,10 @@ describe("generatePkcePair", () => {
 });
 
 describe("generateState", () => {
+  it("uses 32 bytes of entropy, matching Claude Code's accepted state length", () => {
+    expect(generateState()).toHaveLength(43);
+  });
+
   it("produces distinct URL-safe tokens", () => {
     const seen = new Set(Array.from({ length: 100 }, generateState));
     expect(seen.size).toBe(100);

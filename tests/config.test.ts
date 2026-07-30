@@ -3,7 +3,9 @@ import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  applyClaudeCodePreset,
   applyEnvOverrides,
+  CLAUDE_CODE_OAUTH_PRESET,
   defaultConfig,
   DEFAULT_PORT,
   DEFAULT_UPSTREAM,
@@ -28,12 +30,16 @@ afterEach(async () => {
 });
 
 describe("defaultConfig", () => {
-  it("ships no OAuth credentials", () => {
+  it("ships no OAuth credentials or provider identity", () => {
     const config = defaultConfig();
     expect(config.oauth.clientId).toBeNull();
+    expect(config.oauth.clientSecret).toBeNull();
     expect(config.oauth.issuer).toBeNull();
     expect(config.oauth.authorizationEndpoint).toBeNull();
     expect(config.oauth.tokenEndpoint).toBeNull();
+    expect(config.oauth.redirectUri).toBeNull();
+    expect(config.oauth.authParams).toEqual({});
+    expect(config.oauth.tokenRequestFormat).toBe("form");
   });
 
   it("defaults to a local port and the real upstream", () => {
@@ -102,6 +108,78 @@ describe("applyEnvOverrides", () => {
     expect(() =>
       applyEnvOverrides(defaultConfig(), { [ENV_VARS.port]: "0" }),
     ).toThrow(ConfigError);
+  });
+
+  it("applies Claude-style OAuth overrides", () => {
+    const result = applyEnvOverrides(defaultConfig(), {
+      [ENV_VARS.authorizationEndpoint]: "https://claude.ai/oauth/authorize",
+      [ENV_VARS.tokenEndpoint]: "https://platform.claude.com/v1/oauth/token",
+      [ENV_VARS.redirectUri]: "https://platform.claude.com/oauth/code/callback",
+      [ENV_VARS.authParams]: "code=true",
+      [ENV_VARS.tokenRequestFormat]: "json",
+    });
+
+    expect(result.oauth.authorizationEndpoint).toBe(
+      "https://claude.ai/oauth/authorize",
+    );
+    expect(result.oauth.tokenEndpoint).toBe(
+      "https://platform.claude.com/v1/oauth/token",
+    );
+    expect(result.oauth.redirectUri).toBe(
+      "https://platform.claude.com/oauth/code/callback",
+    );
+    expect(result.oauth.authParams).toEqual({ code: "true" });
+    expect(result.oauth.tokenRequestFormat).toBe("json");
+  });
+
+  it("parses auth params from JSON", () => {
+    const result = applyEnvOverrides(defaultConfig(), {
+      [ENV_VARS.authParams]: JSON.stringify({ code: "true", prompt: "consent" }),
+    });
+
+    expect(result.oauth.authParams).toEqual({
+      code: "true",
+      prompt: "consent",
+    });
+  });
+
+  it("rejects an unknown token request format", () => {
+    expect(() =>
+      applyEnvOverrides(defaultConfig(), {
+        [ENV_VARS.tokenRequestFormat]: "xml",
+      }),
+    ).toThrow(ConfigError);
+  });
+});
+
+describe("applyClaudeCodePreset", () => {
+  it("writes the Claude Code OAuth settings without touching the proxy key", () => {
+    const config = defaultConfig();
+    config.proxyKeyHash = "a".repeat(64);
+
+    const result = applyClaudeCodePreset(config);
+
+    expect(result.proxyKeyHash).toBe("a".repeat(64));
+    expect(result.oauth.clientId).toBe(CLAUDE_CODE_OAUTH_PRESET.clientId);
+    expect(result.oauth.authorizationEndpoint).toBe(
+      "https://claude.ai/oauth/authorize",
+    );
+    expect(result.oauth.tokenEndpoint).toBe(
+      "https://platform.claude.com/v1/oauth/token",
+    );
+    expect(result.oauth.redirectUri).toBeNull();
+    expect(result.oauth.scope).toBe("user:profile user:inference");
+    expect(result.oauth.authParams).toEqual({});
+    expect(result.oauth.tokenRequestFormat).toBe("json");
+  });
+
+  it("can write the manual Claude Code OAuth settings", () => {
+    const result = applyClaudeCodePreset(defaultConfig(), { manual: true });
+
+    expect(result.oauth.redirectUri).toBe(
+      "https://platform.claude.com/oauth/code/callback",
+    );
+    expect(result.oauth.authParams).toEqual({ code: "true" });
   });
 });
 

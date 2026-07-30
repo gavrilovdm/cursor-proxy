@@ -6,6 +6,7 @@ import type {
   Credentials,
   HttpClient,
   Logger,
+  Prompt,
 } from "../ports.js";
 import { requireClientId } from "../config.js";
 import { buildAuthorizationUrl, exchangeCode, resolveEndpoints } from "./oauth.js";
@@ -16,6 +17,7 @@ export interface LoginDeps {
   http: HttpClient;
   clock: Clock;
   browser: Browser;
+  prompt?: Prompt;
   logger: Logger;
   credentials: CredentialStore;
 }
@@ -44,20 +46,24 @@ export async function login(
   const pkce = generatePkcePair();
   const state = generateState();
 
-  const receiver = await startLoopbackReceiver({
-    expectedState: state,
-    ...(options.port !== undefined ? { port: options.port } : {}),
-    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
-  });
+  const receiver = config.oauth.redirectUri
+    ? null
+    : await startLoopbackReceiver({
+        expectedState: state,
+        ...(options.port !== undefined ? { port: options.port } : {}),
+        ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      });
+  const redirectUri = config.oauth.redirectUri ?? receiver!.redirectUri;
 
   try {
     const authorizationUrl = buildAuthorizationUrl({
       authorizationEndpoint: endpoints.authorizationEndpoint,
       clientId,
-      redirectUri: receiver.redirectUri,
+      redirectUri,
       scope: config.oauth.scope,
       state,
       codeChallenge: pkce.challenge,
+      extraParams: config.oauth.authParams,
     });
 
     deps.logger.info("Opening your browser to sign in…");
@@ -70,15 +76,23 @@ export async function login(
       deps.logger.warn("Could not open a browser automatically.");
     }
 
-    const code = await receiver.waitForCode();
+    const callback = receiver
+      ? { code: await receiver.waitForCode(), state }
+      : parseManualAuthorizationResponse(
+          await readManualAuthorizationResponse(deps),
+          state,
+        );
 
     const credentials = await exchangeCode(
       {
         tokenEndpoint: endpoints.tokenEndpoint,
         clientId,
-        code,
+        clientSecret: config.oauth.clientSecret,
+        code: callback.code,
+        state: callback.state,
         codeVerifier: pkce.verifier,
-        redirectUri: receiver.redirectUri,
+        redirectUri,
+        tokenRequestFormat: config.oauth.tokenRequestFormat,
       },
       deps.http,
       deps.clock,
@@ -87,11 +101,65 @@ export async function login(
     await deps.credentials.save(credentials);
     return credentials;
   } finally {
-    await receiver.close();
+    await receiver?.close();
   }
 }
 
 /** Forget stored tokens. Local only — it does not revoke server-side. */
 export async function logout(store: CredentialStore): Promise<void> {
   await store.clear();
+}
+
+async function readManualAuthorizationResponse(deps: LoginDeps): Promise<string> {
+  if (!deps.prompt) {
+    throw new Error("Manual OAuth callback requires an interactive prompt.");
+  }
+  deps.logger.info(
+    "After authorizing, paste the full callback URL or the displayed code#state value.",
+  );
+  return deps.prompt.readLine("Authorization response: ");
+}
+
+function parseManualAuthorizationResponse(
+  raw: string,
+  expectedState: string,
+): { code: string; state: string } {
+  const trimmed = raw.trim();
+  let code: string | null = null;
+  let state: string | null = null;
+
+  try {
+    const url = new URL(trimmed);
+    code = url.searchParams.get("code");
+    state = url.searchParams.get("state");
+    if (!code && url.hash.includes("#")) {
+      const fragment = url.hash.slice(1);
+      const split = splitCodeAndState(fragment);
+      code = split.code;
+      state = split.state;
+    }
+  } catch {
+    const split = splitCodeAndState(trimmed);
+    code = split.code;
+    state = split.state;
+  }
+
+  if (!code || !state) {
+    throw new Error(
+      "Authorization response must include both code and state. Paste the displayed code#state value.",
+    );
+  }
+  if (state !== expectedState) {
+    throw new Error("Authorization response carried an unexpected state.");
+  }
+  return { code, state };
+}
+
+function splitCodeAndState(value: string): { code: string | null; state: string | null } {
+  const index = value.lastIndexOf("#");
+  if (index === -1) return { code: value || null, state: null };
+  return {
+    code: value.slice(0, index) || null,
+    state: value.slice(index + 1) || null,
+  };
 }

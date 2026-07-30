@@ -1,5 +1,7 @@
 import openUrl from "open";
-import type { Browser, HttpClient, Logger } from "./ports.js";
+import { createInterface } from "node:readline/promises";
+import { stdin as input, stdout as output } from "node:process";
+import type { Browser, HttpClient, Logger, Prompt } from "./ports.js";
 
 /**
  * The concrete edges of the system: real network, real browser, real stderr.
@@ -16,6 +18,17 @@ export const fetchHttpClient: HttpClient = {
 export const systemBrowser: Browser = {
   open: async (url) => {
     await openUrl(url);
+  },
+};
+
+export const systemPrompt: Prompt = {
+  readLine: async (message) => {
+    const rl = createInterface({ input, output });
+    try {
+      return await rl.question(message);
+    } finally {
+      rl.close();
+    }
   },
 };
 

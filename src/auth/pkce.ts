@@ -10,7 +10,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 /** RFC 7636 allows 43–128 characters; 32 random bytes base64url-encode to 43. */
 const VERIFIER_BYTES = 32;
-const STATE_BYTES = 16;
+const STATE_BYTES = 32;
 
 export interface PkcePair {
   verifier: string;
