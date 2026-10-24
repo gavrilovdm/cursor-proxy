@@ -145,6 +145,34 @@ curl https://example.ngrok-free.app/v1/models \
 
 ## Maintenance
 
+### Run As A Service (macOS)
+
+One proxy serves every project on the machine. Install it once as a launch
+agent: it starts at login and restarts if it dies.
+
+```sh
+node dist/cli.js install-service     # log: ~/.cursor-proxy/logs/proxy.log
+node dist/cli.js uninstall-service
+```
+
+Projects should not install their own agent for the proxy: two agents fight
+over port 8787.
+
+### Update
+
+```sh
+node dist/cli.js update
+```
+
+Pulls `main` (fast-forward only, refuses with local changes), runs `npm ci`
+and the build, and restarts the launch agent if it is installed. This is the
+only upgrade step: projects talk to this one install and never vendor it.
+
+`GET /healthz` returns `{"status":"ok","version":"0.2.0"}`. A project that
+relies on a behaviour from the table in "Using It From Your Own Code" can check
+the version at startup instead of failing silently against an old proxy.
+Version 0.2.0 is the first that absorbs those quirks.
+
 ### Daily Start
 
 ```sh
@@ -156,6 +184,12 @@ ngrok http 8787
 Copy the new ngrok URL into Cursor if it changed.
 
 ### Refresh Claude Code Credentials
+
+The proxy and Claude Code share one session with a single rotating refresh
+token, so whoever refreshes second is logged out. On macOS the running proxy
+therefore checks Claude Code's Keychain entry before every refresh, and again
+after a rejected one, and adopts it when it outlives its own. Keep Claude Code
+in use on this Mac and the proxy follows its session without restarts.
 
 If Anthropic returns `OAuth access token has been revoked`, `login_required`, or
 premium models start failing after Claude Code refreshes its session:
@@ -198,6 +232,9 @@ npm test
 
 ## Commands
 
+- `node dist/cli.js install-service` / `uninstall-service` manage the macOS
+  launch agent.
+- `node dist/cli.js update` pulls, rebuilds and restarts the agent.
 - `node dist/cli.js import-claude-code` imports the signed-in Claude Code OAuth
   session from macOS Keychain. This is the proven path for Cursor.
 - `node dist/cli.js key` prints a new local proxy key once and stores only its

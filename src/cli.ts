@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
@@ -24,7 +25,10 @@ import {
   systemBrowser,
   systemPrompt,
 } from "./adapters.js";
-import type { Config } from "./ports.js";
+import type { Config, Credentials } from "./ports.js";
+import { INSTALL_DIR, VERSION } from "./version.js";
+import * as service from "./service/launchd.js";
+import { updateCheckout } from "./service/update.js";
 
 /**
  * Command line entry point.
@@ -46,7 +50,7 @@ program
   .description(
     "Local Anthropic proxy backed by an OAuth session.",
   )
-  .version("0.1.0");
+  .version(VERSION);
 
 program
   .command("login")
@@ -174,6 +178,45 @@ program
   });
 
 program
+  .command("install-service")
+  .description("Run the proxy as a macOS launch agent: starts at login, restarts if it dies.")
+  .action(async () => {
+    const log = join(BASE_DIR, "logs", "proxy.log");
+    await service.install({
+      node: process.execPath,
+      cli: join(INSTALL_DIR, "dist", "cli.js"),
+      log,
+    });
+    consoleLogger.info(`Installed ${service.LABEL}. Log: ${log}`);
+  });
+
+program
+  .command("uninstall-service")
+  .description("Stop the launch agent and remove it.")
+  .action(async () => {
+    await service.uninstall();
+    consoleLogger.info(`Removed ${service.LABEL}.`);
+  });
+
+program
+  .command("update")
+  .description("Pull the latest main, rebuild, and restart the launch agent if installed.")
+  .action(async () => {
+    const before = VERSION;
+    await updateCheckout(INSTALL_DIR, (line) => consoleLogger.info(line));
+    const version = (
+      JSON.parse(readFileSync(join(INSTALL_DIR, "package.json"), "utf8")) as { version: string }
+    ).version;
+    if (process.platform === "darwin" && (await service.isInstalled())) {
+      await service.restart();
+      consoleLogger.info("Launch agent restarted.");
+    } else {
+      consoleLogger.info("Restart the proxy to load the new build.");
+    }
+    consoleLogger.info(`cursor-proxy ${before} -> ${version}`);
+  });
+
+program
   .command("status")
   .description("Report what is configured and whether a session is stored.")
   .option("--json", "machine-readable output on stdout")
@@ -182,6 +225,7 @@ program
     const credentials = await credentialStore.load();
 
     const report = {
+      version: VERSION,
       configDir: BASE_DIR,
       clientIdConfigured: config.oauth.clientId !== null,
       clientSecretConfigured: config.oauth.clientSecret !== null,
@@ -233,6 +277,7 @@ async function runProxy(
     clientSecret: config.oauth.clientSecret,
     tokenEndpoint: endpoints.tokenEndpoint,
     tokenRequestFormat: config.oauth.tokenRequestFormat,
+    ...(process.platform === "darwin" ? { external: readClaudeCodeSession } : {}),
   });
 
   // Fail at startup rather than on the first request: a proxy that accepts a
@@ -257,13 +302,22 @@ async function runProxy(
     host,
   );
 
-  consoleLogger.info(`Listening on http://${host}:${running.port}`);
+  consoleLogger.info(`cursor-proxy ${VERSION} listening on http://${host}:${running.port}`);
   consoleLogger.info(`Forwarding to ${config.upstream}`);
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       void running.close().then(() => process.exit(0));
     });
+  }
+}
+
+/** Claude Code's current session; null when Keychain has none. */
+async function readClaudeCodeSession(): Promise<Credentials | null> {
+  try {
+    return await loadClaudeCodeCredentialsFromKeychain();
+  } catch {
+    return null;
   }
 }
 

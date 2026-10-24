@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { VERSION } from "../src/version.js";
 import { startProxyServer, type RunningProxy } from "../src/proxy/server.js";
 import { generateProxyKey, hashProxyKey } from "../src/keys.js";
 import { OAuthError } from "../src/errors.js";
@@ -101,7 +102,8 @@ describe("proxy authentication", () => {
     const { url } = await start({});
     const response = await fetch(`${url}/healthz`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ status: "ok" });
+    // The version tells clients which upstream quirks this proxy absorbs for them.
+    expect(await response.json()).toEqual({ status: "ok", version: VERSION });
   });
 });
 

@@ -29,6 +29,13 @@ export interface RefreshingTokenProviderOptions {
   clientSecret?: string | null;
   tokenEndpoint: string;
   tokenRequestFormat: OAuthConfig["tokenRequestFormat"];
+  /**
+   * Another holder of the same session (Claude Code's Keychain entry). Checked
+   * before every refresh and after a rejected one: the two share one rotating
+   * refresh token, so whoever refreshes second is logged out. Adopting the
+   * other side's fresher token avoids burning the shared one twice.
+   */
+  external?: () => Promise<Credentials | null>;
 }
 
 export class RefreshingTokenProvider implements TokenProvider {
@@ -44,8 +51,27 @@ export class RefreshingTokenProvider implements TokenProvider {
       return current.accessToken;
     }
 
+    const adopted = await this.adoptExternal(current);
+    if (adopted) return adopted.accessToken;
+
     const refreshed = await this.refresh(current);
     return refreshed.accessToken;
+  }
+
+  /** Take the external session if it outlives ours; null when it doesn't. */
+  private async adoptExternal(current: Credentials | null): Promise<Credentials | null> {
+    if (!this.options.external) return null;
+    let external: Credentials | null;
+    try {
+      external = await this.options.external();
+    } catch {
+      return null; // Keychain locked or Claude Code absent: fall back to our own refresh.
+    }
+    if (!external || isExpiring(external, this.options.clock)) return null;
+    if (current && external.expiresAt <= current.expiresAt) return null;
+    this.cached = external;
+    await this.options.store.save(external);
+    return external;
   }
 
   /** Load from the store on first use, then serve from memory. */
@@ -101,6 +127,9 @@ export class RefreshingTokenProvider implements TokenProvider {
       // stale — drop them so the next call says "log in" instead of retrying a
       // token the provider has already revoked.
       if (error instanceof OAuthError && error.code === "invalid_grant") {
+        // Claude Code most likely rotated the shared refresh token first.
+        const adopted = await this.adoptExternal(null);
+        if (adopted) return adopted;
         this.cached = null;
         await this.options.store.clear();
         throw new OAuthError(

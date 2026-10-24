@@ -11,6 +11,7 @@ import {
   extractProxyKey,
 } from "./headers.js";
 import { fetchHttpClient } from "../adapters.js";
+import { VERSION } from "../version.js";
 import {
   MODEL_ALIASES,
   toAnthropicMessagesRequest,
@@ -90,7 +91,7 @@ async function handle(
   http: HttpClient,
 ): Promise<void> {
   if (request.url === "/healthz") {
-    writeJson(response, 200, { status: "ok" });
+    writeJson(response, 200, { status: "ok", version: VERSION });
     return;
   }
 
