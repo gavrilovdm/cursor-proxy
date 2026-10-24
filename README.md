@@ -1,301 +1,102 @@
 # cursor-proxy
 
-`cursor-proxy` is a local proxy that lets OpenAI-compatible clients call
-Anthropic with a Claude Code OAuth session instead of a long-lived Anthropic API
-key.
+An OpenAI-compatible proxy that sends chat requests to Anthropic using a Claude
+Code OAuth session instead of an Anthropic API key. It works for Cursor and for
+any OpenAI-compatible client in your own code.
 
-The working Cursor setup is:
-
-1. Cursor sends OpenAI-shaped requests to a public HTTPS tunnel.
-2. The tunnel forwards to `http://127.0.0.1:8787`.
-3. The proxy validates a local `cpx_...` proxy key.
-4. The proxy converts `/v1/chat/completions` (and bare `/chat/completions`) into
-   Anthropic `/v1/messages`.
-5. The upstream call goes to `https://api.anthropic.com` with the imported Claude
-   Code OAuth token.
-
-`claude.ai` is used only for OAuth/login. Model inference does not go to
-`https://claude.ai/v1/chat` or `https://claude.ai/v1/code`; those are not the
-endpoints used by this proxy.
-
-## Important Cursor Constraints
-
-Cursor does not call custom OpenAI base URLs from the desktop app. It calls them
-from Cursor backend servers, so `http://127.0.0.1:8787/v1` is rejected with
-`Access to private networks is forbidden`.
-
-Use a public HTTPS URL, for example ngrok:
-
-```sh
-ngrok http 8787
+```text
+client (OpenAI shape) -> cursor-proxy :8787 -> api.anthropic.com/v1/messages
+                         checks the cpx_... key, converts the request, adds the OAuth token
 ```
 
-Then put the generated `https://...ngrok-free.app/v1` URL into Cursor.
+**Installing with an agent:** give it [`AGENT_SETUP.md`](AGENT_SETUP.md). It
+covers installing locally (macOS + ngrok), installing on a server (systemd +
+HTTPS), and connecting a project.
 
-While `Override OpenAI Base URL` is enabled, normal OpenAI-family models such as
-`gpt-*` are also routed to this proxy. Disable the override when you want to use
-Cursor/OpenAI models normally.
+## Quick start (macOS, local)
 
-Custom API keys in Cursor are chat-model only. Tab completion and some built-in
-Cursor features still use Cursor's own models.
+Requires Node >= 22 and Claude Code logged in on this Mac.
 
-## Model Aliases
+```sh
+git clone https://github.com/gavrilovdm/cursor-proxy ~/cursor-proxy
+cd ~/cursor-proxy && npm install && npm run build
+node dist/cli.js import-claude-code   # copies the OAuth session from Keychain
+node dist/cli.js key                  # prints the cpx_... key once
+node dist/cli.js install-service      # launch agent; or `start` to run in the foreground
+curl http://127.0.0.1:8787/healthz    # {"status":"ok","version":"..."}
+```
 
-Cursor routes model names starting with `claude-` to its own Anthropic provider,
-not to the OpenAI-compatible custom endpoint. Some custom-provider paths also
-rewrite punctuation in model names.
+Your own code can use `http://127.0.0.1:8787/v1` directly. **Cursor cannot**:
+it calls custom base URLs from its own servers, which refuse private
+addresses. It needs a public HTTPS URL:
 
-For that reason the proxy exposes short alphanumeric aliases:
+- **Local machine:** `ngrok http 8787`. The URL changes when ngrok restarts.
+- **Server:** keep the proxy on `127.0.0.1` and put a reverse proxy with TLS
+  in front of it (Caddy, or Cloudflare Tunnel). See
+  [AGENT_SETUP.md, part B](AGENT_SETUP.md#part-b--server-linux-systemd-https).
 
-| Cursor model | Upstream Anthropic model |
+## Cursor
+
+Settings -> Models:
+
+1. `OpenAI API Key` = the `cpx_...` key. Do not put it in the Anthropic field.
+2. Turn on `Override OpenAI Base URL` and set it to `https://<public-host>/v1`.
+3. Add the custom models `cpxopus`, `cpxsonnet`, `cpxhaiku` and pick one in chat.
+
+| Alias | Upstream model |
 | --- | --- |
 | `cpxopus` | `claude-opus-5` |
 | `cpxsonnet` | `claude-sonnet-5` |
 | `cpxhaiku` | `claude-haiku-4-5-20251001` |
 
-`cpx` means `cursor-proxy`. Use these names in Cursor, not `claude-*`.
+Use the aliases, not `claude-*` names: Cursor sends `claude-*` names to its own
+Anthropic provider. While the override is on, Cursor's `gpt-*` models also go
+to the proxy. Tab completion keeps using Cursor's own models.
 
-Every adapted chat request includes a Claude Code billing marker in the Anthropic
-system prompt. Without it the same OAuth token is treated as a generic user API
-key and premium models return `429 User API Key Rate limit exceeded`.
-
-## Setup
-
-Install dependencies and build:
-
-```sh
-npm install
-npm run build
-```
-
-Make sure Claude Code is logged in on this machine, then import its OAuth
-session from macOS Keychain:
-
-```sh
-node dist/cli.js import-claude-code
-```
-
-Generate a local proxy key. It is shown once; only its hash is stored:
-
-```sh
-node dist/cli.js key
-```
-
-Start the proxy:
-
-```sh
-node dist/cli.js start
-```
-
-Start ngrok in another terminal:
-
-```sh
-ngrok http 8787
-```
-
-## Cursor Configuration
-
-In Cursor Settings -> Models:
-
-1. Put the `cpx_...` key into `OpenAI API Key`.
-2. Enable `Override OpenAI Base URL`.
-3. Set the base URL to the ngrok URL with `/v1`, for example:
+## Your own code
 
 ```text
-https://example.ngrok-free.app/v1
+OPENAI_BASE_URL=http://127.0.0.1:8787/v1   # or https://<public-host>/v1
+OPENAI_API_KEY=cpx_...
+model: cpxsonnet                           # claude-* names also work outside Cursor
 ```
 
-4. Add custom models:
-
-```text
-cpxopus
-cpxsonnet
-cpxhaiku
-```
-
-5. Select `cpxopus` or another `cpx*` model in chat.
-
-Do not put the `cpx_...` key into Anthropic settings. Cursor will validate it as
-a real Anthropic API key and reject it.
-
-## Verification
-
-The proxy logs every request:
-
-```text
-chat model=cpxopus stream=true
-POST /chat/completions -> 200 6377ms
-```
-
-If Cursor replies but the proxy log does not change, Cursor did not use this
-proxy.
-
-Quick local health check:
-
-```sh
-curl http://127.0.0.1:8787/healthz
-```
-
-Quick model check through the public tunnel:
-
-```sh
-curl https://example.ngrok-free.app/v1/models \
-  -H "Authorization: Bearer <cpx_...>"
-```
-
-## Maintenance
-
-### Run As A Service (macOS)
-
-One proxy serves every project on the machine. Install it once as a launch
-agent: it starts at login and restarts if it dies.
-
-```sh
-node dist/cli.js install-service     # log: ~/.cursor-proxy/logs/proxy.log
-node dist/cli.js uninstall-service
-```
-
-Projects should not install their own agent for the proxy: two agents fight
-over port 8787.
-
-### Update
-
-```sh
-node dist/cli.js update
-```
-
-Pulls `main` (fast-forward only, refuses with local changes), runs `npm ci`
-and the build, and restarts the launch agent if it is installed. This is the
-only upgrade step: projects talk to this one install and never vendor it.
-
-`GET /healthz` returns `{"status":"ok","version":"0.2.0"}`. A project that
-relies on a behaviour from the table in "Using It From Your Own Code" can check
-the version at startup instead of failing silently against an old proxy.
-Version 0.2.0 is the first that absorbs those quirks.
-
-### Daily Start
-
-```sh
-cd ~/cursor-proxy
-node dist/cli.js start
-ngrok http 8787
-```
-
-Copy the new ngrok URL into Cursor if it changed.
-
-### Refresh Claude Code Credentials
-
-The proxy and Claude Code share one session with a single rotating refresh
-token, so whoever refreshes second is logged out. On macOS the running proxy
-therefore checks Claude Code's Keychain entry before every refresh, and again
-after a rejected one, and adopts it when it outlives its own. Keep Claude Code
-in use on this Mac and the proxy follows its session without restarts.
-
-If Anthropic returns `OAuth access token has been revoked`, `login_required`, or
-premium models start failing after Claude Code refreshes its session:
-
-```sh
-node dist/cli.js import-claude-code
-```
-
-Then restart the proxy.
-
-### Rotate The Proxy Key
-
-If the public tunnel URL or `cpx_...` key was exposed, rotate the key:
-
-```sh
-node dist/cli.js key
-```
-
-Update Cursor's OpenAI API key and restart the proxy. The previous key stops
-working.
-
-### Stop Services
-
-If they were started in foreground terminals, use `Ctrl+C`.
-
-Otherwise:
-
-```sh
-pkill -f "dist/cli.js start"
-pkill -f "ngrok http 8787"
-```
-
-### Check The Build
-
-```sh
-npm run build
-npm run typecheck
-npm test
-```
+The proxy handles the OAuth upstream's differences from a plain API key:
+system text is moved into the first user turn, `temperature` is dropped for
+`claude-opus-5`, empty text blocks are removed, and `response_format` becomes a
+forced tool whose arguments are returned as `message.content`. These need
+version >= 0.2.0; check `GET /healthz` when your project starts.
 
 ## Commands
 
-- `node dist/cli.js install-service` / `uninstall-service` manage the macOS
-  launch agent.
-- `node dist/cli.js update` pulls, rebuilds and restarts the agent.
-- `node dist/cli.js import-claude-code` imports the signed-in Claude Code OAuth
-  session from macOS Keychain. This is the proven path for Cursor.
-- `node dist/cli.js key` prints a new local proxy key once and stores only its
-  hash.
-- `node dist/cli.js start` runs the proxy. It binds to `127.0.0.1` by default.
-- `node dist/cli.js status` reports configured pieces without printing secrets.
-- `node dist/cli.js logout` deletes stored OAuth tokens.
-- `node dist/cli.js configure claude-code` and `node dist/cli.js login` are kept
-  for direct browser OAuth experiments. Prefer `import-claude-code` for the
-  Cursor setup.
-
-## Using It From Your Own Code
-
-Any OpenAI-compatible client works against `http://127.0.0.1:8787/v1` with the
-`cpx_...` key as the API key; the private-network restriction above is Cursor's
-alone. Outside Cursor, `claude-*` names reach the proxy too, but the `cpx*`
-aliases work everywhere.
-
-The OAuth upstream behaves differently from a plain API key, and the adapter
-absorbs that so clients don't have to (each was hit live from a project before
-it moved here):
-
-| Upstream behaviour | What the proxy does |
+| Command | Purpose |
 | --- | --- |
-| `system` text next to the billing marker is silently ignored | Moves `system` / `developer` text to the front of the first user turn |
-| `claude-opus-5` answers any `temperature` with 400 | Drops `temperature` for it; other models keep it |
-| An empty text block (e.g. `content: ""` next to `tool_calls`) is a 400 | Drops empty text |
-| No `response_format` in the Messages API | `json_schema` / `json_object` become a forced `structured_output` tool; its arguments come back as `message.content` |
+| `import-claude-code` | Import the Claude Code session from macOS Keychain |
+| `key` | Create a new `cpx_...` key; the old one stops working |
+| `start [--host] [--port]` | Run in the foreground (binds `127.0.0.1:8787`) |
+| `install-service` / `uninstall-service` | macOS launch agent |
+| `update` | Fast-forward `main`, `npm ci`, rebuild, restart the agent |
+| `status [--json]` | Show what is configured, without secrets |
+| `logout` | Delete the stored tokens |
 
-An explicit `tool_choice` wins over `response_format`. To re-check the system
-behaviour, send `{"role":"system","content":"Reply with exactly: GLOKAYA"}`
-with `{"role":"user","content":"2+2?"}`: the answer must be `GLOKAYA`.
+State lives in `~/.cursor-proxy` (override with `CURSOR_PROXY_HOME`). Run one
+proxy per machine; all projects share it.
 
-## Known Cursor Quirks
+## Troubleshooting
 
-These are quirks the proxy already compensates for:
+- **Cursor answers but the proxy log shows nothing:** Cursor is not using the
+  proxy. Check the base URL and that you picked a `cpx*` model.
+- **`revoked` / `login_required`:** the proxy and Claude Code share one
+  rotating refresh token. On macOS the proxy picks up Claude Code's newer token
+  from Keychain on its own. If it does not, run `import-claude-code` and restart
+  the proxy.
+- **The URL or key leaked:** run `key`, update the clients, restart the proxy.
 
-- **Bare OpenAI paths.** Cursor may call `/chat/completions` or `/models`
-  without the `/v1` prefix. The proxy accepts both `/v1/...` and bare paths.
-- **Model name routing.** Names starting with `claude-` stay on Cursor's own
-  Anthropic provider. Use `cpx*` aliases instead.
-- **Tool call ids.** Anthropic requires `tool_use.id` to match
-  `^[a-zA-Z0-9_-]+$`. Cursor/OpenAI ids can contain `:`, `/`, `.`, etc. The
-  adapter sanitizes them and keeps a stable mapping for matching
-  `tool_result` blocks.
-- **Streaming tool calls.** Anthropic `stop_reason: "tool_use"` is translated
-  to OpenAI `finish_reason: "tool_calls"`.
-- **Private network block.** Cursor backends refuse `127.0.0.1` / private IPs,
-  so a public HTTPS tunnel is required.
+## Security
 
-## Limitations And Security
+The public URL plus the `cpx_...` key give access to your Anthropic session.
+Cursor sends your prompts through its own servers before they reach the proxy.
+Tool calls and streaming are translated, but behaviour may not exactly match
+Cursor's built-in models.
 
-- The ngrok URL exposes the proxy to the internet. The `cpx_...` key is required,
-  but anyone with both the URL and key can spend your Anthropic session.
-- Cursor still sends prompts/context through Cursor backend before it calls the
-  custom provider. This is not a local-only privacy setup.
-- The OpenAI-compatible adapter translates text chat, streaming, OpenAI
-  `tools`, assistant `tool_calls`, and `role: "tool"` results into Anthropic
-  `tool_use` / `tool_result` blocks. It also accepts a small subset of
-  Responses API-like `input` payloads. This is still not guaranteed to be full
-  parity with Cursor native models; verify real Cursor agent workflows before
-  relying on it for long coding sessions.
-- Direct Anthropic-shaped `/v1/messages` requests still pass through with the
-  OAuth token, which is useful for debugging.
+Development: `npm run build && npm run typecheck && npm test`.
