@@ -240,4 +240,3 @@ These are quirks the proxy already compensates for:
   relying on it for long coding sessions.
 - Direct Anthropic-shaped `/v1/messages` requests still pass through with the
   OAuth token, which is useful for debugging.
-- Make sure this use is permitted for your Anthropic/Claude plan.
