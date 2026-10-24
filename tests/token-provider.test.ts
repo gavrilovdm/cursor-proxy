@@ -167,3 +167,60 @@ describe("RefreshingTokenProvider", () => {
     await expect(tokens.getAccessToken()).resolves.toBe("at-fresh");
   });
 });
+
+describe("RefreshingTokenProvider with Claude Code's session", () => {
+  function shared(
+    stored: Credentials,
+    external: Credentials | null,
+    handler: (request: Request) => Response | Promise<Response>,
+  ) {
+    const store = new MemoryCredentialStore(stored);
+    const http = stubHttp(handler);
+    const tokens = new RefreshingTokenProvider({
+      store,
+      http,
+      clock: fakeClock(NOW),
+      clientId: "client-123",
+      tokenEndpoint: "https://auth.example/token",
+      tokenRequestFormat: "json",
+      external: async () => external,
+    });
+    return { tokens, store, http };
+  }
+
+  const expired = credentials({ expiresAt: NOW - 1 });
+  const fresh = credentials({ accessToken: "at-claude-code", refreshToken: "rt-cc", expiresAt: NOW + 7_200_000 });
+
+  it("adopts a fresher Claude Code session instead of refreshing the shared token", async () => {
+    const { tokens, store, http } = shared(expired, fresh, refreshed);
+
+    await expect(tokens.getAccessToken()).resolves.toBe("at-claude-code");
+    expect(http.requests).toHaveLength(0);
+    await expect(store.load()).resolves.toMatchObject({ accessToken: "at-claude-code" });
+  });
+
+  it("refreshes itself when Claude Code's session is no fresher", async () => {
+    const { tokens, http } = shared(expired, credentials({ expiresAt: NOW - 5 }), refreshed);
+
+    await expect(tokens.getAccessToken()).resolves.toBe("at-fresh");
+    expect(http.requests).toHaveLength(1);
+  });
+
+  it("recovers from a refresh token Claude Code already rotated", async () => {
+    // Seen live: the proxy refreshed second, got invalid_grant and dropped its session.
+    let calls = 0;
+    const external = async () => (calls++ === 0 ? null : fresh);
+    const store = new MemoryCredentialStore(expired);
+    const tokens = new RefreshingTokenProvider({
+      store,
+      http: stubHttp(() => jsonResponse({ error: "invalid_grant" }, 400)),
+      clock: fakeClock(NOW),
+      clientId: "client-123",
+      tokenEndpoint: "https://auth.example/token",
+      tokenRequestFormat: "json",
+      external,
+    });
+
+    await expect(tokens.getAccessToken()).resolves.toBe("at-claude-code");
+  });
+});
