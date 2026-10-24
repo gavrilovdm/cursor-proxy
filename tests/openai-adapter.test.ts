@@ -1,6 +1,8 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
+  CLAUDE_CODE_BILLING_SYSTEM,
+  STRUCTURED_OUTPUT_TOOL,
   toAnthropicMessagesRequest,
   toOpenAiChatCompletion,
   writeOpenAiStream,
@@ -53,7 +55,7 @@ describe("OpenAI adapter request translation", () => {
     expect(request).toMatchObject({
       model: "claude-opus-5",
       system:
-        "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;\n\nPrefer terse answers.",
+        "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;",
       tools: [
         {
           name: "read_file",
@@ -69,7 +71,10 @@ describe("OpenAI adapter request translation", () => {
       messages: [
         {
           role: "user",
-          content: [{ type: "text", text: "Read package metadata." }],
+          content: [
+            { type: "text", text: "Prefer terse answers." },
+            { type: "text", text: "Read package metadata." },
+          ],
         },
         {
           role: "assistant",
@@ -260,6 +265,127 @@ describe("OpenAI adapter response translation", () => {
     expect(text).not.toContain('"arguments":"{}"');
     expect(text).toContain('"finish_reason":"tool_calls"');
     expect(text).toContain("data: [DONE]");
+  });
+});
+
+describe("OpenAI adapter workarounds for the OAuth upstream", () => {
+  it("moves system instructions into the first user turn", () => {
+    // Live: a system rule next to the billing marker was ignored, the same rule as user text obeyed.
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        { role: "system", content: "Answer with one word." },
+        { role: "user", content: "2+2?" },
+      ],
+    }) as { system: string; messages: unknown[] };
+
+    expect(request.system).toBe(CLAUDE_CODE_BILLING_SYSTEM);
+    expect(request.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Answer with one word." },
+          { type: "text", text: "2+2?" },
+        ],
+      },
+    ]);
+  });
+
+  it("never prepends instructions to a tool_result turn", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", function: { name: "f", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "c1", content: "ok" },
+        { role: "system", content: "Be brief." },
+      ],
+    }) as { messages: Array<{ role: string; content: Array<{ type: string }> }> };
+
+    expect(request.messages[0]).toEqual({ role: "user", content: [{ type: "text", text: "Be brief." }] });
+    expect(request.messages[2].content[0].type).toBe("tool_result");
+  });
+
+  it("drops temperature for models that reject it and keeps it for the rest", () => {
+    const opus = toAnthropicMessagesRequest({ model: "cpxopus", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+    const sonnet = toAnthropicMessagesRequest({ model: "cpxsonnet", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+
+    expect(opus).not.toHaveProperty("temperature");
+    expect(sonnet).toHaveProperty("temperature", 0.2);
+  });
+
+  it("drops empty text next to tool calls", () => {
+    // Anthropic: 400 "text content blocks must be non-empty".
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        { role: "user", content: "go" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", function: { name: "f", arguments: "{}" } }] },
+      ],
+    }) as { messages: Array<{ content: Array<{ type: string }> }> };
+
+    expect(request.messages[1].content.map((block) => block.type)).toEqual(["tool_use"]);
+  });
+
+  it("turns response_format json_schema into a forced tool", () => {
+    const schema = { type: "object", properties: { score: { type: "number" } } };
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [{ role: "user", content: "rate it" }],
+      response_format: { type: "json_schema", json_schema: { name: "Rating", schema } },
+    });
+
+    expect(request).toMatchObject({
+      tools: [{ name: STRUCTURED_OUTPUT_TOOL, input_schema: schema }],
+      tool_choice: { type: "tool", name: STRUCTURED_OUTPUT_TOOL },
+    });
+  });
+
+  it("leaves an explicit tool_choice alone when response_format is also set", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [{ role: "user", content: "x" }],
+      tools: [{ type: "function", function: { name: "f" } }],
+      tool_choice: "auto",
+      response_format: { type: "json_object" },
+    }) as { tools: Array<{ name: string }>; tool_choice: unknown };
+
+    expect(request.tools.map((tool) => tool.name)).toEqual(["f"]);
+    expect(request.tool_choice).toEqual({ type: "auto" });
+  });
+
+  it("returns the structured tool call as message content", () => {
+    expect(
+      toOpenAiChatCompletion(
+        {
+          id: "msg_1",
+          stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: "t1", name: STRUCTURED_OUTPUT_TOOL, input: { score: 7 } }],
+        },
+        "cpxopus",
+      ),
+    ).toMatchObject({
+      choices: [{ message: { role: "assistant", content: "{\"score\":7}" }, finish_reason: "stop" }],
+    });
+  });
+
+  it("streams the structured tool call as content deltas", async () => {
+    const upstream = new Response(
+      [
+        `data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"${STRUCTURED_OUTPUT_TOOL}","input":{}}}\n\n`,
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"score\\":7}"}}\n\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n',
+        'data: {"type":"message_stop"}\n\n',
+      ].join(""),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    const response = fakeServerResponse();
+
+    await writeOpenAiStream(response, upstream, "cpxopus");
+
+    const text = response.body();
+    expect(text).not.toContain('"tool_calls"');
+    expect(text).toContain('"content":"{\\"score\\":7}"');
+    expect(text).toContain('"finish_reason":"stop"');
   });
 });
 

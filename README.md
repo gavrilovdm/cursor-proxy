@@ -209,6 +209,28 @@ npm test
   for direct browser OAuth experiments. Prefer `import-claude-code` for the
   Cursor setup.
 
+## Using It From Your Own Code
+
+Any OpenAI-compatible client works against `http://127.0.0.1:8787/v1` with the
+`cpx_...` key as the API key; the private-network restriction above is Cursor's
+alone. Outside Cursor, `claude-*` names reach the proxy too, but the `cpx*`
+aliases work everywhere.
+
+The OAuth upstream behaves differently from a plain API key, and the adapter
+absorbs that so clients don't have to (each was hit live from a project before
+it moved here):
+
+| Upstream behaviour | What the proxy does |
+| --- | --- |
+| `system` text next to the billing marker is silently ignored | Moves `system` / `developer` text to the front of the first user turn |
+| `claude-opus-5` answers any `temperature` with 400 | Drops `temperature` for it; other models keep it |
+| An empty text block (e.g. `content: ""` next to `tool_calls`) is a 400 | Drops empty text |
+| No `response_format` in the Messages API | `json_schema` / `json_object` become a forced `structured_output` tool; its arguments come back as `message.content` |
+
+An explicit `tool_choice` wins over `response_format`. To re-check the system
+behaviour, send `{"role":"system","content":"Reply with exactly: GLOKAYA"}`
+with `{"role":"user","content":"2+2?"}`: the answer must be `GLOKAYA`.
+
 ## Known Cursor Quirks
 
 These are quirks the proxy already compensates for:
