@@ -273,9 +273,15 @@ describe("proxy forwarding", () => {
           model: "claude-opus-5",
           max_tokens: 32,
           system:
-            "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;\n\nYou are concise.",
+            "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;",
           messages: [
-            { role: "user", content: [{ type: "text", text: "ping" }] },
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "You are concise." },
+                { type: "text", text: "ping" },
+              ],
+            },
           ],
         });
         return new Response(

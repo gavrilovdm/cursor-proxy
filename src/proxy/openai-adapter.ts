@@ -8,6 +8,15 @@ export const MODEL_ALIASES: Record<string, string> = {
   cpxhaiku: "claude-haiku-4-5-20251001",
 };
 
+/**
+ * Upstream models that answer any `temperature` with 400 (adaptive thinking).
+ * Clients send it by default, so it is dropped rather than forwarded.
+ */
+const REJECTS_TEMPERATURE = /^claude-opus-5/;
+
+/** Name of the tool that stands in for `response_format` (see below). */
+export const STRUCTURED_OUTPUT_TOOL = "structured_output";
+
 export const CLAUDE_CODE_BILLING_SYSTEM =
   "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;";
 
@@ -22,8 +31,16 @@ export interface OpenAiChatCompletionRequest {
   tools?: OpenAiTool[];
   tool_choice?: OpenAiToolChoice;
   parallel_tool_calls?: boolean;
-  response_format?: unknown;
+  response_format?: OpenAiResponseFormat;
 }
+
+type OpenAiResponseFormat =
+  | { type: "text" }
+  | { type: "json_object" }
+  | {
+      type: "json_schema";
+      json_schema?: { name?: string; description?: string; schema?: unknown };
+    };
 
 interface OpenAiMessage {
   role: string;
@@ -92,14 +109,14 @@ type AnthropicRequestContent =
 export function toAnthropicMessagesRequest(
   request: OpenAiChatCompletionRequest,
 ): unknown {
-  const system: string[] = [CLAUDE_CODE_BILLING_SYSTEM];
+  const instructions: string[] = [];
   const messages: AnthropicMessage[] = [];
   const toolUseIds = createToolUseIdMapper();
 
   for (const message of normalizeOpenAiMessages(request)) {
     if (message.role === "system" || message.role === "developer") {
       const content = stringifyOpenAiContent(message.content);
-      if (content) system.push(content);
+      if (content) instructions.push(content);
       continue;
     }
 
@@ -123,18 +140,38 @@ export function toAnthropicMessagesRequest(
     messages.push({ role, content });
   }
 
+  // Verified live: with the Claude Code billing marker in `system`, the rest of
+  // the system prompt is ignored — the model answered "4" to "2+2" under a
+  // system rule demanding one fixed word, and obeyed the same rule sent as user
+  // text. Clients then get plausible answers that silently skip their rules, so
+  // the instructions travel at the front of the first user turn instead.
+  foldInstructions(messages, instructions);
+
+  const model = MODEL_ALIASES[request.model] ?? request.model;
+  const tools = request.tools?.map(toAnthropicTool) ?? [];
+  let toolChoice =
+    request.tool_choice !== undefined
+      ? toAnthropicToolChoice(request.tool_choice)
+      : undefined;
+  // Anthropic has no response_format; a forced tool call is how its API gets
+  // schema-validated JSON. Without this the field was dropped and clients got
+  // free text where they expected JSON.
+  const structured = structuredOutputTool(request.response_format);
+  if (structured && toolChoice === undefined) {
+    tools.push(structured);
+    toolChoice = { type: "tool", name: STRUCTURED_OUTPUT_TOOL };
+  }
+
   return {
-    model: MODEL_ALIASES[request.model] ?? request.model,
+    model,
     max_tokens: request.max_tokens ?? request.max_completion_tokens ?? 1024,
-    ...(request.temperature !== undefined
+    ...(request.temperature !== undefined && !REJECTS_TEMPERATURE.test(model)
       ? { temperature: request.temperature }
       : {}),
     ...(request.stream ? { stream: true } : {}),
-    ...(system.length ? { system: system.join("\n\n") } : {}),
-    ...(request.tools?.length ? { tools: request.tools.map(toAnthropicTool) } : {}),
-    ...(request.tool_choice !== undefined
-      ? { tool_choice: toAnthropicToolChoice(request.tool_choice) }
-      : {}),
+    system: CLAUDE_CODE_BILLING_SYSTEM,
+    ...(tools.length ? { tools } : {}),
+    ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
     messages: messages.length
       ? messages
       : [{ role: "user", content: [{ type: "text", text: "" }] }],
@@ -145,16 +182,21 @@ export function toOpenAiChatCompletion(
   response: AnthropicMessageResponse,
   requestedModel: string,
 ): unknown {
-  const content =
-    response.content
-      ?.filter((part): part is { type: "text"; text?: string } => part.type === "text")
-      .map((part) => part.text ?? "")
-      .join("") ?? "";
+  const structured = response.content?.find(
+    (part): part is Extract<AnthropicContentBlock, { type: "tool_use" }> =>
+      part.type === "tool_use" && part.name === STRUCTURED_OUTPUT_TOOL,
+  );
+  const content = structured
+    ? JSON.stringify(structured.input ?? {})
+    : (response.content
+        ?.filter((part): part is { type: "text"; text?: string } => part.type === "text")
+        .map((part) => part.text ?? "")
+        .join("") ?? "");
   const toolCalls =
     response.content
       ?.filter(
         (part): part is Extract<AnthropicContentBlock, { type: "tool_use" }> =>
-          part.type === "tool_use",
+          part.type === "tool_use" && part.name !== STRUCTURED_OUTPUT_TOOL,
       )
       .map((part, index) => ({
         id: part.id,
@@ -182,9 +224,11 @@ export function toOpenAiChatCompletion(
           ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
         },
         finish_reason:
-          response.stop_reason === "tool_use"
+          response.stop_reason === "tool_use" && !structured
             ? "tool_calls"
-            : (response.stop_reason ?? "stop"),
+            : response.stop_reason === "tool_use"
+              ? "stop"
+              : (response.stop_reason ?? "stop"),
       },
     ],
     usage: {
@@ -210,6 +254,7 @@ export async function writeOpenAiStream(
 
   const id = `chatcmpl-${Date.now().toString(36)}`;
   const toolIndexes = new Map<number, number>();
+  const structuredBlocks = new Set<number>();
   let nextToolIndex = 0;
   let finishReason: string | null = null;
   writeOpenAiSse(response, id, model, { role: "assistant" }, null);
@@ -231,6 +276,7 @@ export async function writeOpenAiStream(
         id,
         model,
         toolIndexes,
+        structuredBlocks,
         nextToolIndex: () => nextToolIndex++,
         getFinishReason: () => finishReason,
         setFinishReason: (reason) => {
@@ -268,12 +314,30 @@ function handleAnthropicStreamEvent(
     id: string;
     model: string;
     toolIndexes: Map<number, number>;
+    /** Blocks of the response_format tool, streamed as plain content. */
+    structuredBlocks: Set<number>;
     nextToolIndex(): number;
     getFinishReason(): string | null;
     setFinishReason(reason: string | null): void;
   },
 ): void {
   if (event.type === "content_block_start") {
+    if (
+      event.content_block.type === "tool_use" &&
+      event.content_block.name === STRUCTURED_OUTPUT_TOOL
+    ) {
+      state.structuredBlocks.add(event.index);
+      if (hasToolInput(event.content_block.input)) {
+        writeOpenAiSse(
+          response,
+          state.id,
+          state.model,
+          { content: JSON.stringify(event.content_block.input) },
+          null,
+        );
+      }
+      return;
+    }
     if (event.content_block.type === "tool_use") {
       const toolIndex = state.nextToolIndex();
       state.toolIndexes.set(event.index, toolIndex);
@@ -321,6 +385,20 @@ function handleAnthropicStreamEvent(
         null,
       );
     }
+    if (
+      "partial_json" in event.delta &&
+      event.delta.partial_json &&
+      state.structuredBlocks.has(event.index)
+    ) {
+      writeOpenAiSse(
+        response,
+        state.id,
+        state.model,
+        { content: event.delta.partial_json },
+        null,
+      );
+      return;
+    }
     if ("partial_json" in event.delta && event.delta.partial_json) {
       const toolIndex = state.toolIndexes.get(event.index);
       if (toolIndex !== undefined) {
@@ -345,10 +423,14 @@ function handleAnthropicStreamEvent(
 
   if (event.type === "message_delta") {
     if (event.delta?.stop_reason) {
+      const toolCalls =
+        event.delta.stop_reason === "tool_use" && state.toolIndexes.size > 0;
       state.setFinishReason(
-        event.delta.stop_reason === "tool_use"
+        toolCalls
           ? "tool_calls"
-          : event.delta.stop_reason,
+          : event.delta.stop_reason === "tool_use"
+            ? "stop"
+            : event.delta.stop_reason,
       );
     }
     return;
@@ -439,8 +521,10 @@ function toAnthropicContentBlocks(
   toolUseIds: (id: string) => string,
 ): AnthropicRequestContent[] {
   const content: AnthropicRequestContent[] = [];
+  // Empty text becomes an empty text block, which Anthropic rejects with 400
+  // "text content blocks must be non-empty" — typical next to tool_calls.
   for (const text of openAiContentToTextParts(message.content)) {
-    content.push({ type: "text", text });
+    if (text) content.push({ type: "text", text });
   }
   for (const toolCall of message.tool_calls ?? []) {
     const name = toolCall.function?.name;
@@ -453,6 +537,42 @@ function toAnthropicContentBlocks(
     });
   }
   return content;
+}
+
+function foldInstructions(
+  messages: AnthropicMessage[],
+  instructions: string[],
+): void {
+  if (!instructions.length) return;
+  const block = { type: "text" as const, text: instructions.join("\n\n") };
+  // tool_result blocks must lead their message, so never prepend to one.
+  const target = messages.find(
+    (message) => message.role === "user" && message.content[0]?.type !== "tool_result",
+  );
+  if (target) target.content.unshift(block);
+  else messages.unshift({ role: "user", content: [block] });
+}
+
+function structuredOutputTool(
+  format: OpenAiResponseFormat | undefined,
+): unknown {
+  if (format?.type === "json_schema") {
+    return {
+      name: STRUCTURED_OUTPUT_TOOL,
+      description:
+        format.json_schema?.description ??
+        `Return the ${format.json_schema?.name ?? "response"} as structured output.`,
+      input_schema: format.json_schema?.schema ?? { type: "object" },
+    };
+  }
+  if (format?.type === "json_object") {
+    return {
+      name: STRUCTURED_OUTPUT_TOOL,
+      description: "Return the response as a JSON object.",
+      input_schema: { type: "object", additionalProperties: true },
+    };
+  }
+  return undefined;
 }
 
 function toAnthropicTool(tool: OpenAiTool): unknown {
