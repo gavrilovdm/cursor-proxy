@@ -1,6 +1,6 @@
 # cursor-proxy
 
-Родитель: [hub/agents-ai](https://github.com/gavrilovdm/hub/blob/main/agents-ai/AGENTS.md)
+Родитель: [hub/projects/non-work/agents-ai](https://github.com/gavrilovdm/hub/blob/main/domains/projects/non-work/agents-ai/AGENTS.md)
 
 Связи: через него ходят в LLM [ai-agent-layer](https://github.com/gavrilovdm/ai-agent-layer) и [vacancy-parser](https://github.com/gavrilovdm/vacancy-parser) (`127.0.0.1:8787`)
 
