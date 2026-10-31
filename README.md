@@ -138,6 +138,9 @@ OTEL_SERVICE_NAME=cursor-proxy                           # optional
 
 A service started by launchd or systemd does not see your shell, so the same
 lines can go in `~/.cursor-proxy/otel.env`, read at start.
+A refused export (wrong key or region, backend down) shows up in the proxy log
+as `OpenTelemetry export failed: Unauthorized (401)` instead of spans silently
+never arriving.
 
 - **Span** `chat <model>` with the GenAI conventions: `gen_ai.request.model`
   (alias as sent), `gen_ai.response.model` (resolved model),

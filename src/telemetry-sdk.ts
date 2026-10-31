@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { diag, DiagLogLevel } from "@opentelemetry/api";
+import { setGlobalErrorHandler } from "@opentelemetry/core";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
@@ -23,6 +25,7 @@ export function startTelemetry(
     process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
   if (!endpoint) return null;
 
+  reportExportFailures(logger);
   const sdk = new NodeSDK({
     serviceName: process.env.OTEL_SERVICE_NAME ?? "cursor-proxy",
     traceExporter: new OTLPTraceExporter(),
@@ -33,5 +36,38 @@ export function startTelemetry(
   });
   sdk.start();
   logger.info(`OpenTelemetry export to ${endpoint}`);
-  return () => sdk.shutdown();
+  // shutdown flushes what is buffered; a refusal there arrives as a rejection.
+  return () =>
+    sdk.shutdown().catch((error: unknown) => logger.error(exportFailure("", [error])));
+}
+
+/**
+ * A refused export (wrong key, wrong region, backend down) is otherwise silent:
+ * the spans just never show up. Route the SDK's own errors into the proxy log.
+ */
+function reportExportFailures(logger: Logger): void {
+  diag.setLogger(
+    {
+      error: (message, ...args) => logger.error(exportFailure(message, args)),
+      warn: (message, ...args) => logger.warn(exportFailure(message, args)),
+      info: () => {},
+      debug: () => {},
+      verbose: () => {},
+    },
+    DiagLogLevel.WARN,
+  );
+  setGlobalErrorHandler((error) => logger.error(exportFailure("", [error])));
+}
+
+function exportFailure(message: string, args: unknown[]): string {
+  const detail = [message, ...args.map(describeError)].filter(Boolean).join(" ");
+  return `OpenTelemetry export failed: ${detail}`;
+}
+
+function describeError(value: unknown): string {
+  if (value instanceof Error) {
+    const code = (value as { code?: unknown }).code;
+    return `${value.message}${code !== undefined ? ` (${String(code)})` : ""}`;
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
 }
