@@ -22,6 +22,7 @@ node dist/cli.js start   # прокси на 127.0.0.1:8787, healthz: /healthz
 
 - `src/cli.ts` — CLI: `import-claude-code`, `key`, `start`, `install-service`, `update`
 - `src/proxy/` — HTTP-сервер и маршрутизация; `telemetry.ts` — спан и метрики OpenTelemetry на каждый чат-запрос (только API, без SDK — no-op)
+- `src/dashboard/` — дашборд `/dashboard`: `usage-file.ts` (журнал вызовов `~/.cursor-proxy/usage.jsonl`), `aggregate.ts` (сводка для страницы), `routes.ts` (страница без ключа, API с ключом), `page.ts` (сама страница, без внешних запросов)
 - `src/telemetry-sdk.ts` — включает экспорт OTLP в `start`, если задан `OTEL_EXPORTER_OTLP_ENDPOINT` (или в `~/.cursor-proxy/otel.env`)
 - `src/adapters.ts` — конвертация OpenAI ↔ Anthropic
 - `src/auth/`, `src/keys.ts` — OAuth-сессия и ключи `cpx_`

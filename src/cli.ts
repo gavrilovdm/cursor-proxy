@@ -20,6 +20,7 @@ import {
 } from "./auth/token-provider.js";
 import { startProxyServer } from "./proxy/server.js";
 import { startTelemetry } from "./telemetry-sdk.js";
+import { FileUsageStore } from "./dashboard/usage-file.js";
 import {
   consoleLogger,
   fetchHttpClient,
@@ -300,6 +301,7 @@ async function runProxy(
       proxyKeyHash: config.proxyKeyHash,
       upstream: config.upstream,
       logger: consoleLogger,
+      usage: new FileUsageStore(join(BASE_DIR, "usage.jsonl")),
     },
     options.port ?? config.port,
     host,
@@ -307,6 +309,7 @@ async function runProxy(
 
   consoleLogger.info(`cursor-proxy ${VERSION} listening on http://${host}:${running.port}`);
   consoleLogger.info(`Forwarding to ${config.upstream}`);
+  consoleLogger.info(`Dashboard: http://${host}:${running.port}/dashboard`);
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {

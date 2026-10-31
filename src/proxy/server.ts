@@ -2,7 +2,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { AddressInfo } from "node:net";
-import type { HttpClient, Logger, TokenProvider } from "../ports.js";
+import type { HttpClient, Logger, TokenProvider, UsageStore } from "../ports.js";
+import {
+  isDashboardApi,
+  isDashboardPage,
+  writeDashboardPage,
+  writeUsageSummary,
+} from "../dashboard/routes.js";
 import { OAuthError } from "../errors.js";
 import { verifyProxyKey } from "../keys.js";
 import {
@@ -50,6 +56,8 @@ export interface ProxyServerOptions {
   logger: Logger;
   /** Injected so tests can point at a stub instead of the network. */
   http?: HttpClient;
+  /** Chat calls for the dashboard; without it the dashboard shows nothing. */
+  usage?: UsageStore;
 }
 
 /** Methods RFC 9110 defines as having no body worth forwarding. */
@@ -100,6 +108,12 @@ async function handle(
     return;
   }
 
+  const path = (request.url ?? "/").split("?")[0] ?? "/";
+  if (request.method === "GET" && isDashboardPage(path)) {
+    writeDashboardPage(response);
+    return;
+  }
+
   if (!options.proxyKeyHash) {
     writeError(
       response,
@@ -114,6 +128,15 @@ async function handle(
     // Same message for absent and wrong keys: distinguishing them tells a
     // prober which half of the problem to work on.
     writeError(response, 401, "authentication_error", "Invalid proxy key.");
+    return;
+  }
+
+  if (request.method === "GET" && isDashboardApi(path)) {
+    await writeUsageSummary(
+      response,
+      options.usage ?? { append: async () => {}, since: async () => [] },
+      new URL(request.url ?? "/", "http://localhost"),
+    );
     return;
   }
 
@@ -223,6 +246,24 @@ async function forwardOpenAiChatCompletion(
   const headers = buildUpstreamHeaders(request.headers, accessToken);
   headers.set("content-type", "application/json");
   const project = extractProject(request.headers);
+  const startedAt = Date.now();
+  const record = (fields: { ok: boolean; error?: string; usage?: TokenUsage }) =>
+    options.usage
+      ?.append({
+        at: Date.now(),
+        project,
+        model: openAiRequest.model,
+        stream: openAiRequest.stream === true,
+        ok: fields.ok,
+        ...(fields.error ? { error: fields.error } : {}),
+        durationMs: Date.now() - startedAt,
+        input: fields.usage?.input ?? 0,
+        output: fields.usage?.output ?? 0,
+        cacheRead: fields.usage?.cacheRead ?? 0,
+        cacheWrite: fields.usage?.cacheWrite ?? 0,
+      })
+      // A full disk must not fail the call the client already received.
+      .catch((error: unknown) => options.logger.warn(`usage not saved: ${describe(error)}`));
   const call = startChatCall(request.headers, {
     project,
     model: openAiRequest.model,
@@ -242,6 +283,7 @@ async function forwardOpenAiChatCompletion(
 
     if (!upstreamResponse.ok || !upstreamResponse.body) {
       call.fail(new Error(`Upstream answered ${upstreamResponse.status}`), upstreamResponse.status);
+      void record({ ok: false, error: String(upstreamResponse.status) });
       await pipeUpstream(response, upstreamResponse);
       return;
     }
@@ -255,9 +297,11 @@ async function forwardOpenAiChatCompletion(
     }
   } catch (error) {
     call.fail(error);
+    void record({ ok: false, error: error instanceof Error ? error.name : "error" });
     throw error;
   }
   call.succeed(usage);
+  void record({ ok: true, usage });
   // Per-request spend, so every project on this proxy can be costed from the log.
   options.logger.info(
     `usage project=${project} model=${openAiRequest.model} ${formatTokenUsage(usage)}`,

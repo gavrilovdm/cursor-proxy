@@ -100,3 +100,27 @@ export interface Logger {
   warn(message: string): void;
   error(message: string): void;
 }
+
+/** One OpenAI-format chat call, as the dashboard sees it. */
+export interface UsageRecord {
+  /** Epoch millis when the call finished. */
+  at: number;
+  project: string;
+  model: string;
+  stream: boolean;
+  ok: boolean;
+  /** Upstream status or error name when `ok` is false. */
+  error?: string;
+  durationMs: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Where chat calls are kept for the dashboard. Never holds prompts or keys. */
+export interface UsageStore {
+  append(record: UsageRecord): Promise<void>;
+  /** Records with `at >= since`, oldest first. */
+  since(since: number): Promise<UsageRecord[]>;
+}

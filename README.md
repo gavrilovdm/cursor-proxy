@@ -101,6 +101,18 @@ counted separately. Sum the lines by `project` and `model`.
 Requests sent in Anthropic's own format (`/v1/messages`) are passed through as
 is and do not get this line. Needs version >= 0.2.1.
 
+## Dashboard
+
+Open `http://127.0.0.1:8787/dashboard` (or `https://<public-host>/dashboard`)
+and paste the proxy key once; the browser keeps it in localStorage. The page
+shows calls, input/output/cache tokens, latency and errors for 24 hours, 7 or
+30 days, a chart by project, a project × model table and the last 20 calls.
+It refreshes every 30 seconds.
+
+Data comes from `~/.cursor-proxy/usage.jsonl`: one line per OpenAI-format chat
+call with project, model, tokens, duration and status — never prompts or keys.
+The page needs no key to load; its data API (`/dashboard/api/usage`) does.
+
 ## OpenTelemetry
 
 Off by default. Set the standard OTLP variables and the proxy exports a span and
