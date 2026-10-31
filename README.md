@@ -59,7 +59,30 @@ Every adapted chat request includes a Claude Code billing marker in the Anthropi
 system prompt. Without it the same OAuth token is treated as a generic user API
 key and premium models return `429 User API Key Rate limit exceeded`.
 
-## Setup
+## Quick Start
+
+```sh
+npm start
+```
+
+That is the whole setup. `scripts/up.sh` installs dependencies if they are
+missing, rebuilds only when `dist` is older than `src`, imports the Claude Code
+OAuth session if none is stored, mints a proxy key only if none is configured,
+then starts listening on `127.0.0.1:8787`. Rerunning it is safe — every step is
+skipped when it is already done, so an existing proxy key is never invalidated.
+
+Flags go after `--`:
+
+```sh
+npm start -- --port 9000
+```
+
+The one prerequisite is that Claude Code is signed in on this machine, since the
+OAuth session is imported from its Keychain entry.
+
+## Setup By Hand
+
+The same steps individually, if you would rather run them yourself.
 
 Install dependencies and build:
 

@@ -8,12 +8,22 @@ import { OAuthError } from "../errors.js";
  * Binds 127.0.0.1 explicitly rather than the wildcard: the redirect carries an
  * authorization code, and a wildcard bind would accept it from anyone on the
  * local network.
+ *
+ * The advertised host is nevertheless `localhost`, because the two are not
+ * interchangeable to an authorization server: Anthropic's client registers
+ * `http://localhost:<port>/callback` and rejects the same URI spelled
+ * `127.0.0.1` outright — "Redirect URI http://127.0.0.1:63335/callback is not
+ * supported by client". The port is not part of that check, so an OS-assigned
+ * one still works. Browsers resolving `localhost` to ::1 first fall back to IPv4
+ * on the refused connection, which is why binding stays IPv4-only.
  */
 
 const CALLBACK_PATH = "/callback";
+const REDIRECT_HOST = "localhost";
+const BIND_ADDRESS = "127.0.0.1";
 
 export interface LoopbackReceiver {
-  /** e.g. `http://127.0.0.1:54321/callback` — known only after binding. */
+  /** e.g. `http://localhost:54321/callback` — known only after binding. */
   redirectUri: string;
   /** Resolves with the authorization code, or rejects on error/timeout. */
   waitForCode(): Promise<string>;
@@ -98,7 +108,7 @@ export async function startLoopbackReceiver(
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(options.port ?? 0, "127.0.0.1", resolve);
+    server.listen(options.port ?? 0, BIND_ADDRESS, resolve);
   });
 
   const address = server.address() as AddressInfo;
@@ -111,7 +121,7 @@ export async function startLoopbackReceiver(
     });
 
   return {
-    redirectUri: `http://127.0.0.1:${address.port}${CALLBACK_PATH}`,
+    redirectUri: `http://${REDIRECT_HOST}:${address.port}${CALLBACK_PATH}`,
     waitForCode: async () => {
       const timer = setTimeout(() => {
         fail?.(
