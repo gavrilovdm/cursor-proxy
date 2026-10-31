@@ -26,6 +26,7 @@ async function start(options: {
   handler?: (request: Request) => Response | Promise<Response>;
   tokens?: TokenProvider;
   proxyKeyHash?: string | null;
+  logger?: Logger;
 }) {
   const http = stubHttp(
     options.handler ?? (() => new Response("ok", { status: 200 })),
@@ -37,7 +38,7 @@ async function start(options: {
       proxyKeyHash:
         options.proxyKeyHash === undefined ? KEY_HASH : options.proxyKeyHash,
       upstream: "https://api.anthropic.com",
-      logger: silentLogger,
+      logger: options.logger ?? silentLogger,
       http,
     },
     0,
@@ -436,5 +437,69 @@ describe("proxy forwarding", () => {
   it("binds loopback only", async () => {
     const { url } = await start({});
     expect(url).toContain("127.0.0.1");
+  });
+});
+
+describe("token usage log", () => {
+  function recordingLogger(): Logger & { lines: string[] } {
+    const lines: string[] = [];
+    return { lines, info: (line) => lines.push(line), warn: () => {}, error: () => {} };
+  }
+
+  function chat(url: string, body: object) {
+    return fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      body: JSON.stringify({ messages: [{ role: "user", content: "ping" }], ...body }),
+    });
+  }
+
+  it("logs the tokens of a completion, including the prompt cache", async () => {
+    const logger = recordingLogger();
+    const { url } = await start({
+      logger,
+      handler: () =>
+        Response.json({
+          id: "msg_usage",
+          content: [{ type: "text", text: "pong" }],
+          usage: {
+            input_tokens: 120,
+            output_tokens: 15,
+            cache_read_input_tokens: 900,
+            cache_creation_input_tokens: 40,
+          },
+        }),
+    });
+
+    await (await chat(url, { model: "cpxhaiku" })).json();
+
+    expect(logger.lines).toContain(
+      "usage model=cpxhaiku in=120 out=15 cache_read=900 cache_write=40",
+    );
+  });
+
+  it("logs the tokens of a stream once it ends", async () => {
+    const logger = recordingLogger();
+    const events = [
+      { type: "message_start", message: { usage: { input_tokens: 50, output_tokens: 1, cache_read_input_tokens: 7 } } },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } },
+      // output_tokens in message_delta is the running total, not an increment.
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 9 } },
+      { type: "message_stop" },
+    ];
+    const { url } = await start({
+      logger,
+      handler: () =>
+        new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), {
+          headers: { "content-type": "text/event-stream" },
+        }),
+    });
+
+    await (await chat(url, { model: "cpxsonnet", stream: true })).text();
+
+    expect(logger.lines).toContain(
+      "usage model=cpxsonnet in=50 out=9 cache_read=7 cache_write=0",
+    );
   });
 });

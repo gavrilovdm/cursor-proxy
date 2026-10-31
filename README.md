@@ -82,6 +82,20 @@ version >= 0.2.0; check `GET /healthz` when your project starts.
 State lives in `~/.cursor-proxy` (override with `CURSOR_PROXY_HOME`). Run one
 proxy per machine; all projects share it.
 
+## Token usage
+
+Every OpenAI-format chat request adds a line to the proxy log once the answer
+is complete (for a stream, when it ends):
+
+```text
+usage model=cpxsonnet in=2480 out=212 cache_read=0 cache_write=0
+```
+
+`in` is uncached input; `cache_read` and `cache_write` are prompt-cache tokens
+counted separately. Sum the lines by `model` to see what each project spends.
+Requests sent in Anthropic's own format (`/v1/messages`) are passed through as
+is and do not get this line. Needs version >= 0.2.1.
+
 ## Troubleshooting
 
 - **Cursor answers but the proxy log shows nothing:** Cursor is not using the

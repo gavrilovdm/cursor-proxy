@@ -76,15 +76,40 @@ interface OpenAiToolCall {
   };
 }
 
+interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
 export interface AnthropicMessageResponse {
   id: string;
   model?: string;
   stop_reason?: string | null;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-  };
+  usage?: AnthropicUsage;
   content?: AnthropicContentBlock[];
+}
+
+/** Tokens one request spent upstream; the cache counts are separate from `input`. */
+export interface TokenUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export function toTokenUsage(usage: AnthropicUsage | undefined): TokenUsage {
+  return {
+    input: usage?.input_tokens ?? 0,
+    output: usage?.output_tokens ?? 0,
+    cacheRead: usage?.cache_read_input_tokens ?? 0,
+    cacheWrite: usage?.cache_creation_input_tokens ?? 0,
+  };
+}
+
+export function formatTokenUsage(usage: TokenUsage): string {
+  return `in=${usage.input} out=${usage.output} cache_read=${usage.cacheRead} cache_write=${usage.cacheWrite}`;
 }
 
 type AnthropicContentBlock =
@@ -240,11 +265,12 @@ export function toOpenAiChatCompletion(
   };
 }
 
+/** Translates the stream and returns the tokens it spent, known only once it ends. */
 export async function writeOpenAiStream(
   response: ServerResponse,
   upstream: Response,
   model: string,
-): Promise<void> {
+): Promise<TokenUsage> {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -257,6 +283,7 @@ export async function writeOpenAiStream(
   const structuredBlocks = new Set<number>();
   let nextToolIndex = 0;
   let finishReason: string | null = null;
+  let usage: AnthropicUsage = {};
   writeOpenAiSse(response, id, model, { role: "assistant" }, null);
 
   const decoder = new TextDecoder();
@@ -272,6 +299,9 @@ export async function writeOpenAiStream(
       const data = parseSseData(event);
       if (!data || data === "[DONE]") continue;
       const parsed = JSON.parse(data) as AnthropicStreamEvent;
+      // message_start carries the input side; message_delta the running output total.
+      if (parsed.type === "message_start") usage = { ...usage, ...parsed.message?.usage };
+      if (parsed.type === "message_delta") usage = { ...usage, ...parsed.usage };
       handleAnthropicStreamEvent(response, parsed, {
         id,
         model,
@@ -287,9 +317,11 @@ export async function writeOpenAiStream(
   }
   response.write("data: [DONE]\n\n");
   response.end();
+  return toTokenUsage(usage);
 }
 
 type AnthropicStreamEvent =
+  | { type: "message_start"; message?: { usage?: AnthropicUsage } }
   | {
       type: "content_block_start";
       index: number;
@@ -304,7 +336,11 @@ type AnthropicStreamEvent =
         | { type?: "text_delta"; text?: string }
         | { type?: "input_json_delta"; partial_json?: string };
     }
-  | { type: "message_delta"; delta?: { stop_reason?: string | null } }
+  | {
+      type: "message_delta";
+      delta?: { stop_reason?: string | null };
+      usage?: AnthropicUsage;
+    }
   | { type: "message_stop" };
 
 function handleAnthropicStreamEvent(

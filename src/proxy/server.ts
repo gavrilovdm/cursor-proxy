@@ -13,12 +13,15 @@ import {
 import { fetchHttpClient } from "../adapters.js";
 import { VERSION } from "../version.js";
 import {
+  formatTokenUsage,
   MODEL_ALIASES,
   toAnthropicMessagesRequest,
   toOpenAiChatCompletion,
+  toTokenUsage,
   writeOpenAiStream,
   type AnthropicMessageResponse,
   type OpenAiChatCompletionRequest,
+  type TokenUsage,
 } from "./openai-adapter.js";
 
 /**
@@ -231,13 +234,16 @@ async function forwardOpenAiChatCompletion(
     return;
   }
 
+  let usage: TokenUsage;
   if (openAiRequest.stream) {
-    await writeOpenAiStream(response, upstreamResponse, openAiRequest.model);
-    return;
+    usage = await writeOpenAiStream(response, upstreamResponse, openAiRequest.model);
+  } else {
+    const anthropic = (await upstreamResponse.json()) as AnthropicMessageResponse;
+    writeJson(response, 200, toOpenAiChatCompletion(anthropic, openAiRequest.model));
+    usage = toTokenUsage(anthropic.usage);
   }
-
-  const anthropic = (await upstreamResponse.json()) as AnthropicMessageResponse;
-  writeJson(response, 200, toOpenAiChatCompletion(anthropic, openAiRequest.model));
+  // Per-request spend, so every project on this proxy can be costed from the log.
+  options.logger.info(`usage model=${openAiRequest.model} ${formatTokenUsage(usage)}`);
 }
 
 /**
