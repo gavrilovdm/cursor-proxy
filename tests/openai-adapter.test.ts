@@ -198,6 +198,37 @@ describe("OpenAI adapter request translation", () => {
   });
 });
 
+describe("OpenAI adapter finish_reason", () => {
+  const cases = [
+    ["end_turn", "stop"],
+    ["stop_sequence", "stop"],
+    ["max_tokens", "length"],
+    ["refusal", "content_filter"],
+    ["some_future_reason", "stop"],
+  ] as const;
+
+  it.each(cases)("maps %s to %s without streaming", (stopReason, finishReason) => {
+    const completion = toOpenAiChatCompletion(
+      { id: "msg_1", stop_reason: stopReason, content: [{ type: "text", text: "hi" }] },
+      "cpxsonnet",
+    );
+
+    expect(completion).toMatchObject({ choices: [{ finish_reason: finishReason }] });
+  });
+
+  it.each(cases)("maps %s to %s when streaming", async (stopReason, finishReason) => {
+    const upstream = new Response(
+      `data: {"type":"message_delta","delta":{"stop_reason":"${stopReason}"}}\n\ndata: {"type":"message_stop"}\n\n`,
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    const response = fakeServerResponse();
+
+    await writeOpenAiStream(response, upstream, "cpxsonnet");
+
+    expect(response.body()).toContain(`"finish_reason":"${finishReason}"`);
+  });
+});
+
 describe("OpenAI adapter response translation", () => {
   it("maps Anthropic tool_use blocks to OpenAI tool_calls", () => {
     expect(

@@ -321,7 +321,7 @@ describe("proxy forwarding", () => {
       choices: [
         {
           message: { role: "assistant", content: "pong" },
-          finish_reason: "end_turn",
+          finish_reason: "stop",
         },
       ],
       usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
