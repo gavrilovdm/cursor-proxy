@@ -446,10 +446,10 @@ describe("token usage log", () => {
     return { lines, info: (line) => lines.push(line), warn: () => {}, error: () => {} };
   }
 
-  function chat(url: string, body: object) {
+  function chat(url: string, body: object, headers: Record<string, string> = {}) {
     return fetch(`${url}/v1/chat/completions`, {
       method: "POST",
-      headers: { "x-api-key": KEY, "content-type": "application/json" },
+      headers: { "x-api-key": KEY, "content-type": "application/json", ...headers },
       body: JSON.stringify({ messages: [{ role: "user", content: "ping" }], ...body }),
     });
   }
@@ -471,10 +471,10 @@ describe("token usage log", () => {
         }),
     });
 
-    await (await chat(url, { model: "cpxhaiku" })).json();
+    await (await chat(url, { model: "cpxhaiku" }, { "x-cpx-project": "gavrisalive" })).json();
 
     expect(logger.lines).toContain(
-      "usage model=cpxhaiku in=120 out=15 cache_read=900 cache_write=40",
+      "usage project=gavrisalive model=cpxhaiku in=120 out=15 cache_read=900 cache_write=40",
     );
   });
 
@@ -498,8 +498,9 @@ describe("token usage log", () => {
 
     await (await chat(url, { model: "cpxsonnet", stream: true })).text();
 
+    // Without the header the line still appears, attributed to an unknown project.
     expect(logger.lines).toContain(
-      "usage model=cpxsonnet in=50 out=9 cache_read=7 cache_write=0",
+      "usage project=unknown model=cpxsonnet in=50 out=9 cache_read=7 cache_write=0",
     );
   });
 });

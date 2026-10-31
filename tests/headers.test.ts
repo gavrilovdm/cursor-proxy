@@ -4,8 +4,25 @@ import {
   OAUTH_BETA_HEADER,
   buildDownstreamHeaders,
   buildUpstreamHeaders,
+  extractProject,
   extractProxyKey,
 } from "../src/proxy/headers.js";
+
+describe("extractProject", () => {
+  it("reads the project name a client sends", () => {
+    expect(extractProject({ "x-cpx-project": "gavrisalive" })).toBe("gavrisalive");
+  });
+
+  it("falls back to unknown when the header is missing", () => {
+    expect(extractProject({})).toBe("unknown");
+  });
+
+  it("refuses values that could forge or break a log line", () => {
+    expect(extractProject({ "x-cpx-project": "a b" })).toBe("unknown");
+    expect(extractProject({ "x-cpx-project": "evil\nusage model=x" })).toBe("unknown");
+    expect(extractProject({ "x-cpx-project": "x".repeat(65) })).toBe("unknown");
+  });
+});
 
 describe("extractProxyKey", () => {
   it("reads x-api-key, the spelling Anthropic SDKs use", () => {
@@ -43,6 +60,11 @@ describe("buildUpstreamHeaders", () => {
   it("never forwards the local proxy key upstream", () => {
     const headers = buildUpstreamHeaders({ "x-api-key": "cpx_secret" }, "token");
     expect([...headers.values()].join(" ")).not.toContain("cpx_secret");
+  });
+
+  it("keeps the project header local", () => {
+    const headers = buildUpstreamHeaders({ "x-cpx-project": "gavrisalive" }, "token");
+    expect(headers.has("x-cpx-project")).toBe(false);
   });
 
   it("drops cookies, which no upstream call needs", () => {

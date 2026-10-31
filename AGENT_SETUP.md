@@ -169,14 +169,18 @@ or install their own service, because two proxies fight over port 8787.
    prefix) read `OPENAI_BASE_URL` and `OPENAI_API_KEY`, or accept
    `base_url`/`baseURL` and `api_key`/`apiKey`. Models are `cpxopus`,
    `cpxsonnet` and `cpxhaiku`. Outside Cursor, `claude-*` names also work.
-3. Startup check (recommended): `GET /healthz` on the proxy root (for example
+3. Name the project: send the header `x-cpx-project: <repo-name>` with every
+   request (most SDKs take default headers: `default_headers` in Python,
+   `defaultHeaders` in JS). The proxy log then attributes token usage to it:
+   `usage project=<repo-name> model=... in=... out=...`.
+4. Startup check (recommended): `GET /healthz` on the proxy root (for example
    `http://127.0.0.1:8787/healthz`, without `/v1`) returns `{"status":"ok","version":"x.y.z"}`. If the version is below
    0.2.0, stop with a clear error, because the fixes below were added in 0.2.0.
-4. Do not add workarounds for these in the project. The proxy already handles
+5. Do not add workarounds for these in the project. The proxy already handles
    them: `system`/`developer` messages, `temperature` on `claude-opus-5`, empty
    text next to `tool_calls`, and `response_format` (`json_schema` and
    `json_object`), whose result comes back in `message.content`.
-5. Smoke test: send
+6. Smoke test: send
    `[{"role":"system","content":"Reply with exactly: GLOKAYA"},{"role":"user","content":"2+2?"}]`.
    The answer must be `GLOKAYA`, and the proxy log shows
    `POST /v1/chat/completions -> 200`.

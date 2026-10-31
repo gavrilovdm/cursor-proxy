@@ -88,11 +88,16 @@ Every OpenAI-format chat request adds a line to the proxy log once the answer
 is complete (for a stream, when it ends):
 
 ```text
-usage model=cpxsonnet in=2480 out=212 cache_read=0 cache_write=0
+usage project=gavrisalive model=cpxsonnet in=2480 out=212 cache_read=0 cache_write=0
 ```
 
+`project` comes from the optional `x-cpx-project` request header (letters,
+digits, `.`, `_`, `-`; anything else or no header logs `unknown`). It stays on
+this proxy and is not forwarded to Anthropic. All projects share one key, so
+this header is the only way to tell their spend apart.
+
 `in` is uncached input; `cache_read` and `cache_write` are prompt-cache tokens
-counted separately. Sum the lines by `model` to see what each project spends.
+counted separately. Sum the lines by `project` and `model`.
 Requests sent in Anthropic's own format (`/v1/messages`) are passed through as
 is and do not get this line. Needs version >= 0.2.1.
 

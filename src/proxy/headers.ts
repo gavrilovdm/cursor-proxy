@@ -44,6 +44,22 @@ const HOP_BY_HOP = new Set([
 const CLIENT_CREDENTIALS = new Set(["x-api-key", "authorization", "cookie"]);
 
 /**
+ * Names the calling project in the usage log and telemetry.
+ *
+ * Every project shares one proxy key, so without it a log line says which model
+ * was used but not by whom. It describes the caller to this proxy only.
+ */
+export const PROJECT_HEADER = "x-cpx-project";
+
+/** Short names only: the value lands in a log line and must not forge another. */
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export function extractProject(headers: IncomingHttpHeaders): string {
+  const value = first(headers[PROJECT_HEADER])?.trim();
+  return value && PROJECT_NAME.test(value) ? value : "unknown";
+}
+
+/**
  * Read the proxy key the caller presented.
  *
  * Both spellings are accepted because SDKs differ: the Anthropic SDKs send
@@ -78,6 +94,7 @@ export function buildUpstreamHeaders(
   for (const [name, value] of Object.entries(inbound)) {
     const lower = name.toLowerCase();
     if (HOP_BY_HOP.has(lower) || CLIENT_CREDENTIALS.has(lower)) continue;
+    if (lower === PROJECT_HEADER) continue;
     if (value === undefined) continue;
 
     for (const item of Array.isArray(value) ? value : [value]) {

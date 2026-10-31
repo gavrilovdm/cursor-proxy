@@ -8,6 +8,7 @@ import { verifyProxyKey } from "../keys.js";
 import {
   buildDownstreamHeaders,
   buildUpstreamHeaders,
+  extractProject,
   extractProxyKey,
 } from "./headers.js";
 import { fetchHttpClient } from "../adapters.js";
@@ -243,7 +244,9 @@ async function forwardOpenAiChatCompletion(
     usage = toTokenUsage(anthropic.usage);
   }
   // Per-request spend, so every project on this proxy can be costed from the log.
-  options.logger.info(`usage model=${openAiRequest.model} ${formatTokenUsage(usage)}`);
+  options.logger.info(
+    `usage project=${extractProject(request.headers)} model=${openAiRequest.model} ${formatTokenUsage(usage)}`,
+  );
 }
 
 /**
