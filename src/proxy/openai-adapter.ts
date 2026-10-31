@@ -14,6 +14,13 @@ export const MODEL_ALIASES: Record<string, string> = {
  */
 const REJECTS_TEMPERATURE = /^claude-opus-5/;
 
+/** Anthropic `stop_reason` → OpenAI `finish_reason`; `tool_use` depends on the blocks, see toFinishReason. */
+const FINISH_REASONS: Readonly<Record<string, string>> = {
+  max_tokens: "length",
+  model_context_window_exceeded: "length",
+  refusal: "content_filter",
+};
+
 /** Name of the tool that stands in for `response_format` (see below). */
 export const STRUCTURED_OUTPUT_TOOL = "structured_output";
 
@@ -248,12 +255,7 @@ export function toOpenAiChatCompletion(
           content,
           ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
         },
-        finish_reason:
-          response.stop_reason === "tool_use" && !structured
-            ? "tool_calls"
-            : response.stop_reason === "tool_use"
-              ? "stop"
-              : (response.stop_reason ?? "stop"),
+        finish_reason: toFinishReason(response.stop_reason, !structured),
       },
     ],
     usage: {
@@ -466,15 +468,7 @@ function handleAnthropicStreamEvent(
 
   if (event.type === "message_delta") {
     if (event.delta?.stop_reason) {
-      const toolCalls =
-        event.delta.stop_reason === "tool_use" && state.toolIndexes.size > 0;
-      state.setFinishReason(
-        toolCalls
-          ? "tool_calls"
-          : event.delta.stop_reason === "tool_use"
-            ? "stop"
-            : event.delta.stop_reason,
-      );
+      state.setFinishReason(toFinishReason(event.delta.stop_reason, state.toolIndexes.size > 0));
     }
     return;
   }
@@ -482,6 +476,12 @@ function handleAnthropicStreamEvent(
   if (event.type === "message_stop") {
     writeOpenAiSse(response, state.id, state.model, {}, state.getFinishReason() ?? "stop");
   }
+}
+
+/** `hasToolCalls` is false when the only tool_use block stands in for `response_format`: the client sees plain text. */
+function toFinishReason(stopReason: string | null | undefined, hasToolCalls: boolean): string {
+  if (stopReason === "tool_use" && hasToolCalls) return "tool_calls";
+  return FINISH_REASONS[stopReason ?? ""] ?? "stop";
 }
 
 function normalizeOpenAiMessages(
