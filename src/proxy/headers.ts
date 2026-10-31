@@ -51,6 +51,12 @@ const CLIENT_CREDENTIALS = new Set(["x-api-key", "authorization", "cookie"]);
  */
 export const PROJECT_HEADER = "x-cpx-project";
 
+/**
+ * W3C trace context: links the client's trace to the proxy's span. It describes
+ * the client's own systems, so it stops here (baggage may carry its data).
+ */
+const TRACE_CONTEXT = new Set(["traceparent", "tracestate", "baggage"]);
+
 /** Short names only: the value lands in a log line and must not forge another. */
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -94,7 +100,7 @@ export function buildUpstreamHeaders(
   for (const [name, value] of Object.entries(inbound)) {
     const lower = name.toLowerCase();
     if (HOP_BY_HOP.has(lower) || CLIENT_CREDENTIALS.has(lower)) continue;
-    if (lower === PROJECT_HEADER) continue;
+    if (lower === PROJECT_HEADER || TRACE_CONTEXT.has(lower)) continue;
     if (value === undefined) continue;
 
     for (const item of Array.isArray(value) ? value : [value]) {

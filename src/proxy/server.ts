@@ -13,6 +13,7 @@ import {
 } from "./headers.js";
 import { fetchHttpClient } from "../adapters.js";
 import { VERSION } from "../version.js";
+import { startChatCall } from "./telemetry.js";
 import {
   formatTokenUsage,
   MODEL_ALIASES,
@@ -221,31 +222,45 @@ async function forwardOpenAiChatCompletion(
   const anthropicRequest = toAnthropicMessagesRequest(openAiRequest);
   const headers = buildUpstreamHeaders(request.headers, accessToken);
   headers.set("content-type", "application/json");
-
-  const upstreamResponse = await http.send(
-    new Request(new URL("/v1/messages", options.upstream), {
-      method: "POST",
-      headers,
-      body: JSON.stringify(anthropicRequest),
-    }),
-  );
-
-  if (!upstreamResponse.ok || !upstreamResponse.body) {
-    await pipeUpstream(response, upstreamResponse);
-    return;
-  }
+  const project = extractProject(request.headers);
+  const call = startChatCall(request.headers, {
+    project,
+    model: openAiRequest.model,
+    upstreamModel: MODEL_ALIASES[openAiRequest.model] ?? openAiRequest.model,
+    stream: openAiRequest.stream === true,
+  });
 
   let usage: TokenUsage;
-  if (openAiRequest.stream) {
-    usage = await writeOpenAiStream(response, upstreamResponse, openAiRequest.model);
-  } else {
-    const anthropic = (await upstreamResponse.json()) as AnthropicMessageResponse;
-    writeJson(response, 200, toOpenAiChatCompletion(anthropic, openAiRequest.model));
-    usage = toTokenUsage(anthropic.usage);
+  try {
+    const upstreamResponse = await http.send(
+      new Request(new URL("/v1/messages", options.upstream), {
+        method: "POST",
+        headers,
+        body: JSON.stringify(anthropicRequest),
+      }),
+    );
+
+    if (!upstreamResponse.ok || !upstreamResponse.body) {
+      call.fail(new Error(`Upstream answered ${upstreamResponse.status}`), upstreamResponse.status);
+      await pipeUpstream(response, upstreamResponse);
+      return;
+    }
+
+    if (openAiRequest.stream) {
+      usage = await writeOpenAiStream(response, upstreamResponse, openAiRequest.model);
+    } else {
+      const anthropic = (await upstreamResponse.json()) as AnthropicMessageResponse;
+      writeJson(response, 200, toOpenAiChatCompletion(anthropic, openAiRequest.model));
+      usage = toTokenUsage(anthropic.usage);
+    }
+  } catch (error) {
+    call.fail(error);
+    throw error;
   }
+  call.succeed(usage);
   // Per-request spend, so every project on this proxy can be costed from the log.
   options.logger.info(
-    `usage project=${extractProject(request.headers)} model=${openAiRequest.model} ${formatTokenUsage(usage)}`,
+    `usage project=${project} model=${openAiRequest.model} ${formatTokenUsage(usage)}`,
   );
 }
 

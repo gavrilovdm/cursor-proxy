@@ -101,6 +101,34 @@ counted separately. Sum the lines by `project` and `model`.
 Requests sent in Anthropic's own format (`/v1/messages`) are passed through as
 is and do not get this line. Needs version >= 0.2.1.
 
+## OpenTelemetry
+
+Off by default. Set the standard OTLP variables and the proxy exports a span and
+metrics for every OpenAI-format chat call:
+
+```sh
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com     # OTLP/HTTP, JSON
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20...     # if the backend needs auth
+OTEL_SERVICE_NAME=cursor-proxy                           # optional
+```
+
+A service started by launchd or systemd does not see your shell, so the same
+lines can go in `~/.cursor-proxy/otel.env`, read at start.
+
+- **Span** `chat <model>` with the GenAI conventions: `gen_ai.request.model`
+  (alias as sent), `gen_ai.response.model` (resolved model),
+  `gen_ai.usage.input_tokens` (cache included), `gen_ai.usage.output_tokens`,
+  `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`,
+  plus `cpx.project` and `cpx.stream`. Failed calls get `error.type` (the
+  upstream status) and an error status.
+- **Trace context:** a client that sends `traceparent` gets this span as a
+  child of its own trace. The header is not forwarded to Anthropic.
+- **Metrics:** `gen_ai.client.token.usage` (by `gen_ai.token.type`, model and
+  project) and `gen_ai.client.operation.duration`.
+
+Any OTLP backend works; for LLM-focused views, Langfuse, Arize Phoenix and
+LangSmith accept OTLP directly.
+
 ## Troubleshooting
 
 - **Cursor answers but the proxy log shows nothing:** Cursor is not using the

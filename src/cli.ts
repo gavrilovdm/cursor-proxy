@@ -19,6 +19,7 @@ import {
   systemClock,
 } from "./auth/token-provider.js";
 import { startProxyServer } from "./proxy/server.js";
+import { startTelemetry } from "./telemetry-sdk.js";
 import {
   consoleLogger,
   fetchHttpClient,
@@ -291,6 +292,8 @@ async function runProxy(
     );
   }
 
+  const stopTelemetry = startTelemetry(join(BASE_DIR, "otel.env"), consoleLogger);
+
   const running = await startProxyServer(
     {
       tokens,
@@ -307,7 +310,10 @@ async function runProxy(
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
-      void running.close().then(() => process.exit(0));
+      void running
+        .close()
+        .then(() => stopTelemetry?.())
+        .then(() => process.exit(0));
     });
   }
 }
