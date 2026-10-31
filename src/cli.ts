@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { ConfigError, OAuthError } from "./errors.js";
 import {
@@ -31,6 +31,7 @@ import type { Config, Credentials } from "./ports.js";
 import { INSTALL_DIR, VERSION } from "./version.js";
 import * as service from "./service/launchd.js";
 import { updateCheckout } from "./service/update.js";
+import { buildReport } from "./report/report.js";
 
 /**
  * Command line entry point.
@@ -217,6 +218,50 @@ program
     }
     consoleLogger.info(`cursor-proxy ${before} -> ${version}`);
   });
+
+program
+  .command("report")
+  .description(
+    "Usage report from Langfuse per project and model, with a short LLM analysis. " +
+      "Settings: LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, CPX_API_KEY " +
+      "(env or <config dir>/report.env).",
+  )
+  .option("--days <number>", "period length; compared with the period before", "7")
+  .option("--model <name>", "model for the analysis", "cpxsonnet")
+  .option("--proxy <url>", "proxy for the analysis", "http://127.0.0.1:8787")
+  .option("--no-llm", "numbers only, no model call")
+  .option("--out <file>", "write markdown here instead of stdout")
+  .action(
+    async (options: { days: string; model: string; proxy: string; llm: boolean; out?: string }) => {
+      const envFile = join(BASE_DIR, "report.env");
+      if (existsSync(envFile)) process.loadEnvFile(envFile);
+      const need = (name: string): string => {
+        const value = process.env[name];
+        if (!value) throw new Error(`${name} is not set (env or ${envFile})`);
+        return value;
+      };
+      const days = Number(options.days);
+      if (!(days > 0)) throw new Error("--days must be a positive number");
+      const markdown = await buildReport({
+        source: {
+          host: process.env.LANGFUSE_HOST ?? process.env.LANGFUSE_BASE_URL ?? "https://cloud.langfuse.com",
+          publicKey: need("LANGFUSE_PUBLIC_KEY"),
+          secretKey: need("LANGFUSE_SECRET_KEY"),
+        },
+        days,
+        ...(options.llm
+          ? { llm: { url: options.proxy, key: need("CPX_API_KEY"), model: options.model } }
+          : {}),
+      });
+      if (options.out) {
+        mkdirSync(dirname(options.out), { recursive: true });
+        writeFileSync(options.out, markdown);
+        consoleLogger.info(`Report written to ${options.out}`);
+      } else {
+        process.stdout.write(markdown);
+      }
+    },
+  );
 
 program
   .command("status")
