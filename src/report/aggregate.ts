@@ -17,8 +17,7 @@ export interface Observation {
   level?: string | null;
   statusMessage?: string | null;
   usageDetails?: Record<string, number> | null;
-  usage?: { input?: number | null; output?: number | null } | null;
-  calculatedTotalCost?: number | null;
+  totalCost?: number | null;
   metadata?: unknown;
 }
 
@@ -50,16 +49,25 @@ export interface Period {
   errors: { project: string; type: string; count: number }[];
 }
 
-/** Reads a span attribute wherever Langfuse put it: flat or under `attributes`. */
-export function attribute(metadata: unknown, key: string): unknown {
+const ATTRIBUTES = [
+  "cpx.project",
+  "gen_ai.request.model",
+  "gen_ai.usage.input_tokens",
+  "gen_ai.usage.output_tokens",
+  "gen_ai.usage.cache_read.input_tokens",
+  "error.type",
+] as const;
+
+/** Langfuse keeps span attributes as flat metadata keys: `attributes.cpx.project`. */
+function attribute(metadata: unknown, key: (typeof ATTRIBUTES)[number]): unknown {
   if (metadata === null || typeof metadata !== "object") return undefined;
-  const m = metadata as Record<string, unknown>;
-  if (key in m) return m[key];
-  const attrs = m.attributes;
-  if (attrs !== null && typeof attrs === "object" && key in attrs) {
-    return (attrs as Record<string, unknown>)[key];
-  }
-  return undefined;
+  return (metadata as Record<string, unknown>)[`attributes.${key}`];
+}
+
+/** Only the attributes the report reads: the rest may hold prompt text. */
+export function reportMetadata(metadata: unknown): Record<string, unknown> {
+  const kept = ATTRIBUTES.map((key) => [`attributes.${key}`, attribute(metadata, key)] as const);
+  return Object.fromEntries(kept.filter(([, value]) => value !== undefined));
 }
 
 function num(value: unknown): number {
@@ -102,10 +110,11 @@ function toCall(o: Observation): Call | null {
     model: typeof model === "string" ? model : (o.name ?? "?").replace(/^chat /, ""),
     ms: Number.isFinite(end - start) ? end - start : null,
     error,
-    input: num(o.usageDetails?.input ?? o.usage?.input ?? attribute(o.metadata, "gen_ai.usage.input_tokens")),
-    output: num(o.usageDetails?.output ?? o.usage?.output ?? attribute(o.metadata, "gen_ai.usage.output_tokens")),
+    // The proxy's own count first: its input includes cache reads, as the report promises.
+    input: num(attribute(o.metadata, "gen_ai.usage.input_tokens") ?? o.usageDetails?.input),
+    output: num(attribute(o.metadata, "gen_ai.usage.output_tokens") ?? o.usageDetails?.output),
     cacheRead: num(attribute(o.metadata, "gen_ai.usage.cache_read.input_tokens")),
-    cost: num(o.calculatedTotalCost),
+    cost: num(o.totalCost),
   };
 }
 

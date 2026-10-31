@@ -29,10 +29,27 @@ export async function buildReport(options: ReportOptions): Promise<string> {
   const current = aggregate(observations, from, to);
   const previous = aggregate(observations, before, from);
 
-  const tables = renderTables(current, previous);
+  // Without this guard a change in how Langfuse stores attributes looks like a quiet week.
+  const unread = observations.length > 0 && current.totals.calls + previous.totals.calls === 0;
+  const warning = unread ? `> Langfuse returned ${n(observations.length)} observations, but no span carries \`cpx.project\`.\n\n` : "";
+  const tables = `${warning}${renderTables(current, previous)}`;
   if (!options.llm) return tables;
-  const analysis = await analyze(current, previous, options.llm, f);
-  return `${analysis.trim()}\n\n---\n\n${tables}`;
+  return `${await analysisOrNote(current, previous, options.llm, f)}\n\n---\n\n${tables}`;
+}
+
+/** The numbers are the point of the report: a failed analysis must not lose them. */
+async function analysisOrNote(
+  current: Period,
+  previous: Period,
+  llm: NonNullable<ReportOptions["llm"]>,
+  f: typeof fetch,
+): Promise<string> {
+  try {
+    const { text, truncated } = await analyze(current, previous, llm, f);
+    return truncated ? `${text.trim()}\n\n> Analysis cut off by the token limit.` : text.trim();
+  } catch (error) {
+    return `> Analysis unavailable: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 function n(value: number): string {
@@ -96,7 +113,7 @@ async function analyze(
   previous: Period,
   llm: NonNullable<ReportOptions["llm"]>,
   f: typeof fetch,
-): Promise<string> {
+): Promise<{ text: string; truncated: boolean }> {
   const response = await f(new URL("/v1/chat/completions", llm.url), {
     method: "POST",
     headers: {
@@ -114,8 +131,11 @@ async function analyze(
   if (!response.ok) {
     throw new Error(`LLM answered ${response.status}: ${(await response.text()).slice(0, 200)}`);
   }
-  const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-  const text = body.choices?.[0]?.message?.content;
+  const body = (await response.json()) as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+  };
+  const choice = body.choices?.[0];
+  const text = choice?.message?.content;
   if (!text) throw new Error("LLM returned an empty answer");
-  return text;
+  return { text, truncated: choice?.finish_reason === "length" };
 }

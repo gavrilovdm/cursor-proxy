@@ -29,7 +29,7 @@ npm start                # scripts/up.sh: недостающие шаги (insta
 - `src/adapters.ts` — конвертация OpenAI ↔ Anthropic
 - `src/auth/`, `src/keys.ts` — OAuth-сессия и ключи `cpx_`; redirect URI логина — `http://localhost:<порт>/callback` (Anthropic не принимает `127.0.0.1`), слушаем при этом только `127.0.0.1`
 - `src/service/` — launchd / systemd
-- `src/report/` — команда `report`: тянет наблюдения из Langfuse (`/api/public/observations`, текст промптов отбрасывается сразу), считает по `cpx.project` × модель вызовы, ошибки, токены, p50/p95 против прошлого периода, и отдаёт агрегаты (без трейсов) в LLM на короткий разбор. Ключи — `~/.cursor-proxy/report.env`: `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `CPX_API_KEY`
+- `src/report/` — команда `report`: тянет наблюдения из Langfuse (`/api/public/v2/observations`, без полей `io`; из метаданных остаются только нужные атрибуты), считает по `cpx.project` × модель вызовы, ошибки, токены, p50/p95 против прошлого периода, и отдаёт агрегаты (без трейсов) в LLM на короткий разбор. Ключи — `~/.cursor-proxy/report.env`: `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `CPX_API_KEY`
 - `AGENT_SETUP.md` — пошаговая установка для агента (Mac, сервер, подключение проекта)
 
 ## Соглашения и подводные камни
