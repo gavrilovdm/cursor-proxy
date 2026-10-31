@@ -265,12 +265,12 @@ export function toOpenAiChatCompletion(
   };
 }
 
-/** Translates the stream and returns the tokens it spent, known only once it ends. */
+/** Translates the stream; returns the tokens it spent and the text it sent, known only once it ends. */
 export async function writeOpenAiStream(
   response: ServerResponse,
   upstream: Response,
   model: string,
-): Promise<TokenUsage> {
+): Promise<{ usage: TokenUsage; text: string }> {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
@@ -284,6 +284,7 @@ export async function writeOpenAiStream(
   let nextToolIndex = 0;
   let finishReason: string | null = null;
   let usage: AnthropicUsage = {};
+  let text = "";
   writeOpenAiSse(response, id, model, { role: "assistant" }, null);
 
   const decoder = new TextDecoder();
@@ -302,6 +303,12 @@ export async function writeOpenAiStream(
       // message_start carries the input side; message_delta the running output total.
       if (parsed.type === "message_start") usage = { ...usage, ...parsed.message?.usage };
       if (parsed.type === "message_delta") usage = { ...usage, ...parsed.usage };
+      if (parsed.type === "content_block_delta" && "text" in parsed.delta && parsed.delta.text) {
+        text += parsed.delta.text;
+      }
+      if (parsed.type === "content_block_delta" && "partial_json" in parsed.delta && parsed.delta.partial_json) {
+        text += parsed.delta.partial_json;
+      }
       handleAnthropicStreamEvent(response, parsed, {
         id,
         model,
@@ -317,7 +324,7 @@ export async function writeOpenAiStream(
   }
   response.write("data: [DONE]\n\n");
   response.end();
-  return toTokenUsage(usage);
+  return { usage: toTokenUsage(usage), text };
 }
 
 type AnthropicStreamEvent =

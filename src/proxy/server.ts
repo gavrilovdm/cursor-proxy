@@ -269,9 +269,11 @@ async function forwardOpenAiChatCompletion(
     model: openAiRequest.model,
     upstreamModel: MODEL_ALIASES[openAiRequest.model] ?? openAiRequest.model,
     stream: openAiRequest.stream === true,
+    messages: openAiRequest.messages ?? openAiRequest.input,
   });
 
   let usage: TokenUsage;
+  let answer = "";
   try {
     const upstreamResponse = await http.send(
       new Request(new URL("/v1/messages", options.upstream), {
@@ -289,18 +291,21 @@ async function forwardOpenAiChatCompletion(
     }
 
     if (openAiRequest.stream) {
-      usage = await writeOpenAiStream(response, upstreamResponse, openAiRequest.model);
+      ({ usage, text: answer } = await writeOpenAiStream(response, upstreamResponse, openAiRequest.model));
     } else {
       const anthropic = (await upstreamResponse.json()) as AnthropicMessageResponse;
-      writeJson(response, 200, toOpenAiChatCompletion(anthropic, openAiRequest.model));
+      const completion = toOpenAiChatCompletion(anthropic, openAiRequest.model);
+      writeJson(response, 200, completion);
       usage = toTokenUsage(anthropic.usage);
+      const choice = (completion as { choices?: { message?: { content?: unknown } }[] }).choices?.[0];
+      answer = typeof choice?.message?.content === "string" ? choice.message.content : "";
     }
   } catch (error) {
     call.fail(error);
     void record({ ok: false, error: error instanceof Error ? error.name : "error" });
     throw error;
   }
-  call.succeed(usage);
+  call.succeed(usage, answer);
   void record({ ok: true, usage });
   // Per-request spend, so every project on this proxy can be costed from the log.
   options.logger.info(

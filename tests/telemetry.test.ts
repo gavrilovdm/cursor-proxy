@@ -144,4 +144,61 @@ describe("chat telemetry", () => {
     });
     expect((output.value as { sum: number }).sum).toBeGreaterThanOrEqual(20);
   });
+
+  it("leaves prompts and answers out of spans by default", async () => {
+    const { url } = await start(completion);
+    await (await chat(url)).json();
+
+    const [span] = await finishedSpans();
+    expect(span.attributes["langfuse.observation.input"]).toBeUndefined();
+    expect(span.attributes["gen_ai.output.messages"]).toBeUndefined();
+  });
+
+  it("records prompts and answers when content capture is on", async () => {
+    process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = "true";
+    try {
+      const { url } = await start(completion);
+      await (await chat(url)).json();
+
+      const [span] = await finishedSpans();
+      expect(JSON.parse(String(span.attributes["langfuse.observation.input"]))).toEqual([
+        { role: "user", content: "ping" },
+      ]);
+      expect(span.attributes["langfuse.observation.output"]).toBe("pong");
+      expect(span.attributes["gen_ai.output.messages"]).toBeDefined();
+    } finally {
+      delete process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT;
+    }
+  });
+
+  it("records a streamed answer when content capture is on", async () => {
+    process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT = "true";
+    try {
+      const events = [
+        { type: "message_start", message: { usage: { input_tokens: 5, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "po" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ng" } },
+        { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } },
+        { type: "message_stop" },
+      ];
+      const { url } = await start(
+        () =>
+          new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), {
+            headers: { "content-type": "text/event-stream" },
+          }),
+      );
+      const response = await fetch(`${url}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "x-api-key": KEY, "content-type": "application/json" },
+        body: JSON.stringify({ model: "cpxsonnet", stream: true, messages: [{ role: "user", content: "ping" }] }),
+      });
+      await response.text();
+
+      const [span] = await finishedSpans();
+      expect(span.attributes["langfuse.observation.output"]).toBe("pong");
+    } finally {
+      delete process.env.OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT;
+    }
+  });
 });

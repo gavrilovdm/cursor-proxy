@@ -138,6 +138,17 @@ OTEL_SERVICE_NAME=cursor-proxy                           # optional
 
 A service started by launchd or systemd does not see your shell, so the same
 lines can go in `~/.cursor-proxy/otel.env`, read at start.
+Prompts and answers are left out of spans by default: every project's prompts
+pass through this proxy, some with personal data. To see them as Input/Output in
+Langfuse, add to `otel.env`:
+
+```sh
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+```
+
+The span then also carries `langfuse.observation.input`/`output` and the
+standard `gen_ai.input.messages`/`gen_ai.output.messages`.
+
 A refused export (wrong key or region, backend down) shows up in the proxy log
 as `OpenTelemetry export failed: Unauthorized (401)` instead of spans silently
 never arriving.

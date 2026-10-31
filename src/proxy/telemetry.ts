@@ -29,10 +29,23 @@ export interface ChatCallInfo {
   /** The model actually requested upstream after alias resolution. */
   upstreamModel: string;
   stream: boolean;
+  /** The request's messages, recorded only when content capture is on. */
+  messages?: unknown;
+}
+
+/**
+ * The standard switch for recording prompts and answers on GenAI spans. Off by
+ * default: every project's prompts pass through here, some with personal data.
+ */
+const CAPTURE_CONTENT = "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT";
+
+export function capturesContent(): boolean {
+  return process.env[CAPTURE_CONTENT]?.toLowerCase() === "true";
 }
 
 export interface ChatCall {
-  succeed(usage: TokenUsage): void;
+  /** `answer` is recorded only when content capture is on. */
+  succeed(usage: TokenUsage, answer?: string): void;
   /** `status` is the upstream HTTP status when there was one. */
   fail(error: unknown, status?: number): void;
 }
@@ -54,6 +67,13 @@ export function startChatCall(headers: IncomingHttpHeaders, info: ChatCallInfo):
         ...common,
         "gen_ai.response.model": info.upstreamModel,
         "cpx.stream": info.stream,
+        ...(capturesContent() && info.messages !== undefined
+          ? {
+              // Langfuse reads the first pair as Input; gen_ai.* is the standard name.
+              "langfuse.observation.input": JSON.stringify(info.messages),
+              "gen_ai.input.messages": JSON.stringify(info.messages),
+            }
+          : {}),
       },
     },
     parent,
@@ -69,7 +89,13 @@ export function startChatCall(headers: IncomingHttpHeaders, info: ChatCallInfo):
     duration.record((performance.now() - startedAt) / 1000, { ...common, ...extra });
 
   return {
-    succeed(usage) {
+    succeed(usage, answer) {
+      if (capturesContent() && answer !== undefined) {
+        span.setAttributes({
+          "langfuse.observation.output": answer,
+          "gen_ai.output.messages": JSON.stringify([{ role: "assistant", content: answer }]),
+        });
+      }
       span.setAttributes({
         // Per the conventions input_tokens includes cached input; the cache parts
         // are reported separately as well.
