@@ -15,6 +15,18 @@ HTTPS), and connecting a project.
 
 ## Quick start (macOS, local)
 
+One command does every step below that is still missing and skips the rest:
+
+```sh
+npm start              # or: npm start -- --port 9000
+```
+
+`scripts/up.sh` installs dependencies, rebuilds only when `dist` is older than
+`src`, imports the Claude Code session if none is stored, mints a proxy key only
+if none is configured (so an existing key keeps working), then starts the proxy
+in the foreground. Rerunning it is safe. For a launch agent instead, run the
+steps by hand:
+
 Requires Node >= 22 and Claude Code logged in on this Mac.
 
 ```sh

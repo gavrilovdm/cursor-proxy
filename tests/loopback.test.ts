@@ -19,6 +19,9 @@ async function open(expectedState = "state-abc", timeoutMs = 5_000) {
 /** Hit the callback the way a browser would, ignoring the HTML we send back. */
 async function callback(base: string, query: Record<string, string>) {
   const url = new URL(base);
+  // The server binds IPv4 only, and Node resolves `localhost` to ::1 first —
+  // a browser falls back, `fetch` here would just fail.
+  url.hostname = "127.0.0.1";
   for (const [key, value] of Object.entries(query)) {
     url.searchParams.set(key, value);
   }
@@ -30,7 +33,9 @@ async function callback(base: string, query: Record<string, string>) {
 describe("startLoopbackReceiver", () => {
   it("binds loopback on an OS-assigned port", async () => {
     const { redirectUri } = await open();
-    expect(redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/);
+    // `localhost`, not `127.0.0.1`: Anthropic's client registration rejects the
+    // latter, and the port is not part of what it checks.
+    expect(redirectUri).toMatch(/^http:\/\/localhost:\d+\/callback$/);
   });
 
   it("delivers the code from a matching callback", async () => {

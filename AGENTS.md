@@ -16,6 +16,7 @@ npm run build       # tsc → dist/
 npm test            # vitest
 npm run typecheck
 node dist/cli.js start   # прокси на 127.0.0.1:8787, healthz: /healthz
+npm start                # scripts/up.sh: недостающие шаги (install, build, импорт сессии, ключ) и запуск на переднем плане
 ```
 
 ## Структура
@@ -25,7 +26,7 @@ node dist/cli.js start   # прокси на 127.0.0.1:8787, healthz: /healthz
 - `src/dashboard/` — дашборд `/dashboard`: `usage-file.ts` (журнал вызовов `~/.cursor-proxy/usage.jsonl`), `aggregate.ts` (сводка для страницы), `routes.ts` (страница без ключа, API с ключом), `page.ts` (сама страница, без внешних запросов)
 - `src/telemetry-sdk.ts` — включает экспорт OTLP в `start`, если задан `OTEL_EXPORTER_OTLP_ENDPOINT` (или в `~/.cursor-proxy/otel.env`)
 - `src/adapters.ts` — конвертация OpenAI ↔ Anthropic
-- `src/auth/`, `src/keys.ts` — OAuth-сессия и ключи `cpx_`
+- `src/auth/`, `src/keys.ts` — OAuth-сессия и ключи `cpx_`; redirect URI логина — `http://localhost:<порт>/callback` (Anthropic не принимает `127.0.0.1`), слушаем при этом только `127.0.0.1`
 - `src/service/` — launchd / systemd
 - `AGENT_SETUP.md` — пошаговая установка для агента (Mac, сервер, подключение проекта)
 
