@@ -122,7 +122,7 @@ describe("OpenAI adapter request translation", () => {
     });
 
     expect(request).toMatchObject({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-haiku-5-5",
       messages: [
         { role: "user", content: [{ type: "text", text: "Call the helper." }] },
         {
@@ -339,9 +339,69 @@ describe("OpenAI adapter workarounds for the OAuth upstream", () => {
   it("drops temperature for models that reject it and keeps it for the rest", () => {
     const opus = toAnthropicMessagesRequest({ model: "cpxopus", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
     const sonnet = toAnthropicMessagesRequest({ model: "cpxsonnet", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+    const sonnet5 = toAnthropicMessagesRequest({ model: "claude-sonnet-5", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+    const haiku = toAnthropicMessagesRequest({ model: "cpxhaiku", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
+    const olderHaiku = toAnthropicMessagesRequest({ model: "claude-haiku-4-5-20251001", temperature: 0.2, messages: [{ role: "user", content: "hi" }] });
 
     expect(opus).not.toHaveProperty("temperature");
-    expect(sonnet).toHaveProperty("temperature", 0.2);
+    expect(sonnet).not.toHaveProperty("temperature");
+    expect(sonnet5).not.toHaveProperty("temperature");
+    expect(haiku).not.toHaveProperty("temperature");
+    expect(olderHaiku).toHaveProperty("temperature", 0.2);
+  });
+
+  it("resolves the aliases to the current models", () => {
+    const modelOf = (alias: string) =>
+      (toAnthropicMessagesRequest({ model: alias, messages: [{ role: "user", content: "hi" }] }) as { model: string }).model;
+
+    expect(modelOf("cpxsonnet")).toBe("claude-sonnet-5-5");
+    expect(modelOf("cpxhaiku")).toBe("claude-haiku-5-5");
+  });
+
+  it("asks for the forced tool in words where the model refuses a forced tool_choice", () => {
+    // Live: claude-sonnet-5-5 answers 400 'tool_choice: type "tool" and "any" are not supported'.
+    const tool = { type: "function" as const, function: { name: "read_file" } };
+    const named = toAnthropicMessagesRequest({
+      model: "cpxsonnet",
+      messages: [{ role: "user", content: "go" }],
+      tools: [tool],
+      tool_choice: { type: "function", function: { name: "read_file" } },
+    }) as { tool_choice: unknown; messages: Array<{ content: Array<{ text?: string }> }> };
+    const required = toAnthropicMessagesRequest({
+      model: "cpxsonnet",
+      messages: [{ role: "user", content: "go" }],
+      tools: [tool],
+      tool_choice: "required",
+    }) as { tool_choice: unknown; messages: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(named.tool_choice).toEqual({ type: "auto" });
+    expect(named.messages[0].content[0].text).toContain("read_file");
+    expect(required.tool_choice).toEqual({ type: "auto" });
+    expect(required.messages[0].content[0].text).toContain("tools");
+  });
+
+  it("asks for the response_format tool in words where the model refuses a forced tool_choice", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxsonnet",
+      messages: [{ role: "user", content: "go" }],
+      response_format: { type: "json_object" },
+    }) as { tools: Array<{ name: string }>; tool_choice: unknown; messages: Array<{ content: Array<{ text?: string }> }> };
+
+    expect(request.tools.map((tool) => tool.name)).toEqual([STRUCTURED_OUTPUT_TOOL]);
+    expect(request.tool_choice).toEqual({ type: "auto" });
+    expect(request.messages[0].content[0].text).toContain(STRUCTURED_OUTPUT_TOOL);
+  });
+
+  it("keeps a forced tool_choice where the model accepts it", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxhaiku",
+      messages: [{ role: "user", content: "go" }],
+      tools: [{ type: "function", function: { name: "read_file" } }],
+      tool_choice: { type: "function", function: { name: "read_file" } },
+    }) as { tool_choice: unknown; messages: Array<{ content: unknown[] }> };
+
+    expect(request.tool_choice).toEqual({ type: "tool", name: "read_file" });
+    expect(request.messages[0].content).toEqual([{ type: "text", text: "go" }]);
   });
 
   it("drops empty text next to tool calls", () => {

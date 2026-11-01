@@ -363,12 +363,12 @@ describe("proxy forwarding", () => {
     const { url } = await start({
       handler: async (request) => {
         expect(await request.json()).toMatchObject({
-          model: "claude-haiku-4-5-20251001",
+          model: "claude-haiku-5-5",
         });
         return new Response(
           JSON.stringify({
             id: "msg_alias",
-            model: "claude-haiku-4-5-20251001",
+            model: "claude-haiku-5-5",
             content: [{ type: "text", text: "pong" }],
           }),
           { headers: { "content-type": "application/json" } },

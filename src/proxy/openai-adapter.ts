@@ -4,15 +4,22 @@ import type { ServerResponse } from "node:http";
 /** Aliases accepted in place of upstream model ids. */
 export const MODEL_ALIASES: Record<string, string> = {
   cpxopus: "claude-opus-5",
-  cpxsonnet: "claude-sonnet-5",
-  cpxhaiku: "claude-haiku-4-5-20251001",
+  cpxsonnet: "claude-sonnet-5-5",
+  cpxhaiku: "claude-haiku-5-5",
 };
 
 /**
- * Upstream models that answer any `temperature` with 400 (adaptive thinking).
- * Clients send it by default, so it is dropped rather than forwarded.
+ * Upstream models that answer `temperature` with 400 (verified live on
+ * claude-sonnet-5, claude-sonnet-5-5 and claude-haiku-5-5). Clients send it by
+ * default, so it is dropped rather than forwarded.
  */
-const REJECTS_TEMPERATURE = /^claude-opus-5/;
+const REJECTS_TEMPERATURE = /^claude-(opus|sonnet|haiku)-5/;
+
+/**
+ * Upstream models that answer a `tool_choice` of `tool` or `any` with 400
+ * (verified live on claude-sonnet-5-5; claude-haiku-5-5 still accepts it).
+ */
+const REJECTS_FORCED_TOOL_CHOICE = /^claude-(opus|sonnet)-5-5/;
 
 /** Anthropic `stop_reason` → OpenAI `finish_reason`; `tool_use` depends on the blocks, see toFinishReason. */
 const FINISH_REASONS: Readonly<Record<string, string>> = {
@@ -40,6 +47,10 @@ export interface OpenAiChatCompletionRequest {
   parallel_tool_calls?: boolean;
   response_format?: OpenAiResponseFormat;
 }
+
+type AnthropicToolChoice =
+  | { type: "auto" | "none" | "any" }
+  | { type: "tool"; name: string };
 
 type OpenAiResponseFormat =
   | { type: "text" }
@@ -172,13 +183,6 @@ export function toAnthropicMessagesRequest(
     messages.push({ role, content });
   }
 
-  // Verified live: with the Claude Code billing marker in `system`, the rest of
-  // the system prompt is ignored — the model answered "4" to "2+2" under a
-  // system rule demanding one fixed word, and obeyed the same rule sent as user
-  // text. Clients then get plausible answers that silently skip their rules, so
-  // the instructions travel at the front of the first user turn instead.
-  foldInstructions(messages, instructions);
-
   const model = MODEL_ALIASES[request.model] ?? request.model;
   const tools = request.tools?.map(toAnthropicTool) ?? [];
   let toolChoice =
@@ -193,6 +197,18 @@ export function toAnthropicMessagesRequest(
     tools.push(structured);
     toolChoice = { type: "tool", name: STRUCTURED_OUTPUT_TOOL };
   }
+  // Only a request, not a guarantee: the model may still answer in text.
+  if ((toolChoice?.type === "tool" || toolChoice?.type === "any") && REJECTS_FORCED_TOOL_CHOICE.test(model)) {
+    instructions.push(forcedToolInstruction(toolChoice));
+    toolChoice = { type: "auto" };
+  }
+
+  // Verified live: with the Claude Code billing marker in `system`, the rest of
+  // the system prompt is ignored — the model answered "4" to "2+2" under a
+  // system rule demanding one fixed word, and obeyed the same rule sent as user
+  // text. Clients then get plausible answers that silently skip their rules, so
+  // the instructions travel at the front of the first user turn instead.
+  foldInstructions(messages, instructions);
 
   return {
     model,
@@ -633,7 +649,13 @@ function toAnthropicTool(tool: OpenAiTool): unknown {
   };
 }
 
-function toAnthropicToolChoice(choice: OpenAiToolChoice): unknown {
+function forcedToolInstruction(choice: AnthropicToolChoice): string {
+  return "name" in choice
+    ? `You must respond by calling the ${choice.name} tool.`
+    : "You must respond by calling one of the available tools.";
+}
+
+function toAnthropicToolChoice(choice: OpenAiToolChoice): AnthropicToolChoice {
   if (choice === "none") return { type: "none" };
   if (choice === "required") return { type: "any" };
   if (choice === "auto") return { type: "auto" };

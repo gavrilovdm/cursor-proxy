@@ -58,8 +58,8 @@ Settings -> Models:
 | Alias | Upstream model |
 | --- | --- |
 | `cpxopus` | `claude-opus-5` |
-| `cpxsonnet` | `claude-sonnet-5` |
-| `cpxhaiku` | `claude-haiku-4-5-20251001` |
+| `cpxsonnet` | `claude-sonnet-5-5` |
+| `cpxhaiku` | `claude-haiku-5-5` |
 
 Use the aliases, not `claude-*` names: Cursor sends `claude-*` names to its own
 Anthropic provider. While the override is on, Cursor's `gpt-*` models also go
@@ -75,9 +75,13 @@ model: cpxsonnet                           # claude-* names also work outside Cu
 
 The proxy handles the OAuth upstream's differences from a plain API key:
 system text is moved into the first user turn, `temperature` is dropped for
-`claude-opus-5`, empty text blocks are removed, and `response_format` becomes a
-forced tool whose arguments are returned as `message.content`. These need
-version >= 0.2.0; check `GET /healthz` when your project starts.
+Claude 5 and later models, empty text blocks are removed, and `response_format`
+becomes a forced tool whose arguments are returned as `message.content`. These
+need version >= 0.2.0; check `GET /healthz` when your project starts.
+
+`claude-sonnet-5-5` refuses forced tool calls, so there the proxy sends
+`tool_choice: auto` and asks for the tool in the first user turn. The model can
+still answer in text, so check for the tool call or valid JSON.
 
 ## Commands
 
