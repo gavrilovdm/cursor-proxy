@@ -177,7 +177,7 @@ or install their own service, because two proxies fight over port 8787.
    `http://127.0.0.1:8787/healthz`, without `/v1`) returns `{"status":"ok","version":"x.y.z"}`. If the version is below
    0.2.0, stop with a clear error, because the fixes below were added in 0.2.0.
 5. Do not add workarounds for these in the project. The proxy already handles
-   them: `system`/`developer` messages, `temperature` on `claude-opus-5`, empty
+   them: `system`/`developer` messages, `temperature` on Claude 5 and later models, empty
    text next to `tool_calls`, and `response_format` (`json_schema` and
    `json_object`), whose result comes back in `message.content`.
 6. Smoke test: send

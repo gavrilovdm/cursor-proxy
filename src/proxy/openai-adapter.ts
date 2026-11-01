@@ -1,18 +1,26 @@
 import { Readable } from "node:stream";
 import type { ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 
 /** Aliases accepted in place of upstream model ids. */
 export const MODEL_ALIASES: Record<string, string> = {
   cpxopus: "claude-opus-5",
-  cpxsonnet: "claude-sonnet-5",
-  cpxhaiku: "claude-haiku-4-5-20251001",
+  cpxsonnet: "claude-sonnet-5-5",
+  cpxhaiku: "claude-haiku-5-5",
 };
 
 /**
- * Upstream models that answer any `temperature` with 400 (adaptive thinking).
- * Clients send it by default, so it is dropped rather than forwarded.
+ * Upstream models that answer `temperature` with 400 (verified live on
+ * claude-sonnet-5, claude-sonnet-5-5 and claude-haiku-5-5). Clients send it by
+ * default, so it is dropped rather than forwarded.
  */
-const REJECTS_TEMPERATURE = /^claude-opus-5/;
+const REJECTS_TEMPERATURE = /^claude-(opus|sonnet|haiku)-5/;
+
+/**
+ * Upstream models that answer a `tool_choice` of `tool` or `any` with 400
+ * (verified live on claude-sonnet-5-5; claude-haiku-5-5 still accepts it).
+ */
+const REJECTS_FORCED_TOOL_CHOICE = /^claude-(opus|sonnet)-5-5/;
 
 /** Anthropic `stop_reason` → OpenAI `finish_reason`; `tool_use` depends on the blocks, see toFinishReason. */
 const FINISH_REASONS: Readonly<Record<string, string>> = {
@@ -24,8 +32,29 @@ const FINISH_REASONS: Readonly<Record<string, string>> = {
 /** Name of the tool that stands in for `response_format` (see below). */
 export const STRUCTURED_OUTPUT_TOOL = "structured_output";
 
-export const CLAUDE_CODE_BILLING_SYSTEM =
-  "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;";
+export const CLAUDE_CODE_VERSION = "2.1.316";
+const CLAUDE_CODE_BILLING_SALT = "59cf53e54c78";
+
+/**
+ * Build the Claude Code billing marker for this user turn. Both hash fragments
+ * are bound to the message, so a literal marker becomes stale when the client
+ * version changes or the request content changes.
+ */
+export function createClaudeCodeBillingSystem(userMessage: string): string {
+  const sampled = [4, 7, 20]
+    .map((index) => userMessage[index] ?? "0")
+    .join("");
+  const versionHash = createHash("sha256")
+    .update(`${CLAUDE_CODE_BILLING_SALT}${sampled}${CLAUDE_CODE_VERSION}`)
+    .digest("hex")
+    .slice(0, 3);
+  const contentHash = createHash("sha256")
+    .update(userMessage)
+    .digest("hex")
+    .slice(0, 5);
+
+  return `x-anthropic-billing-header: cc_version=${CLAUDE_CODE_VERSION}.${versionHash}; cc_entrypoint=cli; cch=${contentHash};`;
+}
 
 export interface OpenAiChatCompletionRequest {
   model: string;
@@ -40,6 +69,10 @@ export interface OpenAiChatCompletionRequest {
   parallel_tool_calls?: boolean;
   response_format?: OpenAiResponseFormat;
 }
+
+type AnthropicToolChoice =
+  | { type: "auto" | "none" | "any" }
+  | { type: "tool"; name: string };
 
 type OpenAiResponseFormat =
   | { type: "text" }
@@ -144,6 +177,7 @@ export function toAnthropicMessagesRequest(
   const instructions: string[] = [];
   const messages: AnthropicMessage[] = [];
   const toolUseIds = createToolUseIdMapper();
+  let latestUserMessage = "";
 
   for (const message of normalizeOpenAiMessages(request)) {
     if (message.role === "system" || message.role === "developer") {
@@ -166,18 +200,15 @@ export function toAnthropicMessagesRequest(
       continue;
     }
 
+    if (message.role === "user") {
+      latestUserMessage = stringifyOpenAiContent(message.content);
+    }
+
     const role = message.role === "assistant" ? "assistant" : "user";
     const content = toAnthropicContentBlocks(message, toolUseIds);
     if (content.length === 0) continue;
     messages.push({ role, content });
   }
-
-  // Verified live: with the Claude Code billing marker in `system`, the rest of
-  // the system prompt is ignored — the model answered "4" to "2+2" under a
-  // system rule demanding one fixed word, and obeyed the same rule sent as user
-  // text. Clients then get plausible answers that silently skip their rules, so
-  // the instructions travel at the front of the first user turn instead.
-  foldInstructions(messages, instructions);
 
   const model = MODEL_ALIASES[request.model] ?? request.model;
   const tools = request.tools?.map(toAnthropicTool) ?? [];
@@ -193,6 +224,18 @@ export function toAnthropicMessagesRequest(
     tools.push(structured);
     toolChoice = { type: "tool", name: STRUCTURED_OUTPUT_TOOL };
   }
+  // Only a request, not a guarantee: the model may still answer in text.
+  if ((toolChoice?.type === "tool" || toolChoice?.type === "any") && REJECTS_FORCED_TOOL_CHOICE.test(model)) {
+    instructions.push(forcedToolInstruction(toolChoice));
+    toolChoice = { type: "auto" };
+  }
+
+  // Verified live: with the Claude Code billing marker in `system`, the rest of
+  // the system prompt is ignored — the model answered "4" to "2+2" under a
+  // system rule demanding one fixed word, and obeyed the same rule sent as user
+  // text. Clients then get plausible answers that silently skip their rules, so
+  // the instructions travel at the front of the first user turn instead.
+  foldInstructions(messages, instructions);
 
   return {
     model,
@@ -201,7 +244,7 @@ export function toAnthropicMessagesRequest(
       ? { temperature: request.temperature }
       : {}),
     ...(request.stream ? { stream: true } : {}),
-    system: CLAUDE_CODE_BILLING_SYSTEM,
+    system: createClaudeCodeBillingSystem(latestUserMessage),
     ...(tools.length ? { tools } : {}),
     ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
     messages: messages.length
@@ -633,7 +676,13 @@ function toAnthropicTool(tool: OpenAiTool): unknown {
   };
 }
 
-function toAnthropicToolChoice(choice: OpenAiToolChoice): unknown {
+function forcedToolInstruction(choice: AnthropicToolChoice): string {
+  return "name" in choice
+    ? `You must respond by calling the ${choice.name} tool.`
+    : "You must respond by calling one of the available tools.";
+}
+
+function toAnthropicToolChoice(choice: OpenAiToolChoice): AnthropicToolChoice {
   if (choice === "none") return { type: "none" };
   if (choice === "required") return { type: "any" };
   if (choice === "auto") return { type: "auto" };

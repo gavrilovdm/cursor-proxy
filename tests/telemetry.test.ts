@@ -100,7 +100,7 @@ describe("chat telemetry", () => {
       "gen_ai.operation.name": "chat",
       "gen_ai.provider.name": "anthropic",
       "gen_ai.request.model": "cpxhaiku",
-      "gen_ai.response.model": "claude-haiku-4-5-20251001",
+      "gen_ai.response.model": "claude-haiku-5-5",
       "gen_ai.usage.input_tokens": 130,
       "gen_ai.usage.output_tokens": 20,
       "gen_ai.usage.cache_read.input_tokens": 30,
