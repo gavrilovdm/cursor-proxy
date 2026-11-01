@@ -1,0 +1,20 @@
+{
+  "modules": {
+    "docs-check": {
+      "extensions": [
+        ".ts",
+        ".tsx"
+      ],
+      "paths": [],
+      "exclude": [
+        "tests",
+        "scripts",
+        ".claude",
+        "node_modules",
+        "dist"
+      ],
+      "command": "npx --no-install eslint --no-config-lookup -c eslint.docs.mjs {file}"
+    },
+    "git-flow": {}
+  }
+}

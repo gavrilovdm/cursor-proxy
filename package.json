@@ -35,8 +35,11 @@
   "devDependencies": {
     "@opentelemetry/sdk-trace": "^3.0.0",
     "@types/node": "^22.10.0",
+    "eslint": "^10.14.0",
+    "eslint-plugin-jsdoc": "^65.4.2",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "typescript-eslint": "^8.72.1",
     "vitest": "^2.1.0"
   }
 }
