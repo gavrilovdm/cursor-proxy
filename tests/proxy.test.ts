@@ -276,7 +276,7 @@ describe("proxy forwarding", () => {
           model: "claude-opus-5",
           max_tokens: 32,
           system:
-            "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;",
+            "x-anthropic-billing-header: cc_version=2.1.316.2e4; cc_entrypoint=cli; cch=758d6;",
           messages: [
             {
               role: "user",

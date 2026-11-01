@@ -1,7 +1,7 @@
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
-  CLAUDE_CODE_BILLING_SYSTEM,
+  createClaudeCodeBillingSystem,
   STRUCTURED_OUTPUT_TOOL,
   toAnthropicMessagesRequest,
   toOpenAiChatCompletion,
@@ -55,7 +55,7 @@ describe("OpenAI adapter request translation", () => {
     expect(request).toMatchObject({
       model: "claude-opus-5",
       system:
-        "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;",
+        "x-anthropic-billing-header: cc_version=2.1.316.045; cc_entrypoint=cli; cch=bec32;",
       tools: [
         {
           name: "read_file",
@@ -310,7 +310,7 @@ describe("OpenAI adapter workarounds for the OAuth upstream", () => {
       ],
     }) as { system: string; messages: unknown[] };
 
-    expect(request.system).toBe(CLAUDE_CODE_BILLING_SYSTEM);
+    expect(request.system).toBe(createClaudeCodeBillingSystem("2+2?"));
     expect(request.messages).toEqual([
       {
         role: "user",
@@ -477,6 +477,14 @@ describe("OpenAI adapter workarounds for the OAuth upstream", () => {
     expect(text).not.toContain('"tool_calls"');
     expect(text).toContain('"content":"{\\"score\\":7}"');
     expect(text).toContain('"finish_reason":"stop"');
+  });
+});
+
+describe("Claude Code billing marker", () => {
+  it("binds the version and content hashes to the user message", () => {
+    expect(createClaudeCodeBillingSystem("ping")).toBe(
+      "x-anthropic-billing-header: cc_version=2.1.316.2e4; cc_entrypoint=cli; cch=758d6;",
+    );
   });
 });
 

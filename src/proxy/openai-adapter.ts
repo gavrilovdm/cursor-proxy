@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import type { ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
 
 /** Aliases accepted in place of upstream model ids. */
 export const MODEL_ALIASES: Record<string, string> = {
@@ -31,8 +32,29 @@ const FINISH_REASONS: Readonly<Record<string, string>> = {
 /** Name of the tool that stands in for `response_format` (see below). */
 export const STRUCTURED_OUTPUT_TOOL = "structured_output";
 
-export const CLAUDE_CODE_BILLING_SYSTEM =
-  "x-anthropic-billing-header: cc_version=2.1.220.5bd; cc_entrypoint=sdk-cli;";
+export const CLAUDE_CODE_VERSION = "2.1.316";
+const CLAUDE_CODE_BILLING_SALT = "59cf53e54c78";
+
+/**
+ * Build the Claude Code billing marker for this user turn. Both hash fragments
+ * are bound to the message, so a literal marker becomes stale when the client
+ * version changes or the request content changes.
+ */
+export function createClaudeCodeBillingSystem(userMessage: string): string {
+  const sampled = [4, 7, 20]
+    .map((index) => userMessage[index] ?? "0")
+    .join("");
+  const versionHash = createHash("sha256")
+    .update(`${CLAUDE_CODE_BILLING_SALT}${sampled}${CLAUDE_CODE_VERSION}`)
+    .digest("hex")
+    .slice(0, 3);
+  const contentHash = createHash("sha256")
+    .update(userMessage)
+    .digest("hex")
+    .slice(0, 5);
+
+  return `x-anthropic-billing-header: cc_version=${CLAUDE_CODE_VERSION}.${versionHash}; cc_entrypoint=cli; cch=${contentHash};`;
+}
 
 export interface OpenAiChatCompletionRequest {
   model: string;
@@ -155,6 +177,7 @@ export function toAnthropicMessagesRequest(
   const instructions: string[] = [];
   const messages: AnthropicMessage[] = [];
   const toolUseIds = createToolUseIdMapper();
+  let latestUserMessage = "";
 
   for (const message of normalizeOpenAiMessages(request)) {
     if (message.role === "system" || message.role === "developer") {
@@ -175,6 +198,10 @@ export function toAnthropicMessagesRequest(
         ],
       });
       continue;
+    }
+
+    if (message.role === "user") {
+      latestUserMessage = stringifyOpenAiContent(message.content);
     }
 
     const role = message.role === "assistant" ? "assistant" : "user";
@@ -217,7 +244,7 @@ export function toAnthropicMessagesRequest(
       ? { temperature: request.temperature }
       : {}),
     ...(request.stream ? { stream: true } : {}),
-    system: CLAUDE_CODE_BILLING_SYSTEM,
+    system: createClaudeCodeBillingSystem(latestUserMessage),
     ...(tools.length ? { tools } : {}),
     ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
     messages: messages.length
