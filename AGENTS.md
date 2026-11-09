@@ -2,7 +2,7 @@
 
 Родитель: [hub/projects/non-work/agents-ai](https://github.com/gavrilovdm/hub/blob/main/domains/projects/non-work/agents-ai/AGENTS.md)
 
-Связи: через него ходят в LLM [ai-agent-layer](https://github.com/gavrilovdm/ai-agent-layer) и [vacancy-parser](https://github.com/gavrilovdm/vacancy-parser) (`127.0.0.1:8787`)
+Связи: через него ходят в LLM [ai-agent-layer](https://github.com/gavrilovdm/ai-agent-layer), [vacancy-parser](https://github.com/gavrilovdm/vacancy-parser), [job-agent](https://github.com/gavrilovdm/job-agent) и [gavrisalive](https://github.com/gavrilovdm/gavrisalive) (`127.0.0.1:8787`); что каждый из них ждёт от прокси — `tests/consumer-contracts.test.ts`
 
 ## Что это
 
@@ -31,6 +31,7 @@ npm start                # scripts/up.sh: недостающие шаги (insta
 - `src/service/` — launchd / systemd
 - `src/report/` — команда `report`: тянет наблюдения из Langfuse (`/api/public/v2/observations`, без полей `io`; из метаданных остаются только нужные атрибуты), считает по `cpx.project` × модель вызовы, ошибки, токены, p50/p95 против прошлого периода, и отдаёт агрегаты (без трейсов) в LLM на короткий разбор. Ключи — `~/.cursor-proxy/report.env`: `LANGFUSE_HOST`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `CPX_API_KEY`
 - `AGENT_SETUP.md` — пошаговая установка для агента (Mac, сервер, подключение проекта)
+- `tests/consumer-contracts.test.ts` — контракты потребителей: по `describe` на репозиторий из «Связей», запросы и читаемые поля ответа взяты из их кода; апстрим — заглушка
 
 ## Соглашения и подводные камни
 
@@ -38,5 +39,5 @@ npm start                # scripts/up.sh: недостающие шаги (insta
 - Порт 8787 наружу не открывать: публичный доступ только через ngrok или reverse proxy с TLS.
 - Текст промптов и ответов в спаны — только при `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`: через прокси идут промпты всех проектов, в том числе с личными данными.
 - Строка `usage project=… model=… in=… out=…` в логе и атрибуты спанов — формат для потребителей (дашборд, разбор логов); менять осознанно.
-- Один прокси на машину; при смене формата API проверь потребителей из «Связей».
+- Один прокси на машину. Упавший тест в `consumer-contracts.test.ts` называет потребителя, которого ломает изменение: ломающее изменение — только вместе с задачей в его репозитории. Новый потребитель — новый `describe` там же и строка в «Связях».
 - Документация и git: `.claude/kit.json` подключает общие хуки hub. После правки агент получает напоминание про JSDoc у экспортов (`eslint.docs.mjs`, только напоминание, CI его не проверяет); мерж и история основной ветки защищены `merge_gate`.
