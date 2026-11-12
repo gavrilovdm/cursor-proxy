@@ -20,7 +20,7 @@ export class ConfigError extends Error {
   toGuidance(): string {
     return [
       this.message,
-      `  Set it in ~/.cursor-proxy/config.json under "${this.configKey}",`,
+      `  Set it in ~/.llm-proxy/config.json under "${this.configKey}",`,
       `  or export ${this.envVar}.`,
     ].join("\n");
   }

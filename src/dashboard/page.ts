@@ -8,7 +8,7 @@ export const DASHBOARD_HTML = String.raw`<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cursor-proxy usage</title>
+<title>llm-proxy usage</title>
 <style>
 :root {
   color-scheme: light;
@@ -101,7 +101,7 @@ td .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; ma
   function askKey(message) {
     clearInterval(timer);
     app.innerHTML =
-      '<form class="key-form card"><h1>cursor-proxy <span>usage</span></h1>' +
+      '<form class="key-form card"><h1>llm-proxy <span>usage</span></h1>' +
       "<p>Paste the proxy key (cpx_…). It stays in this browser and is sent only to this proxy.</p>" +
       '<input name="key" type="password" autocomplete="off" placeholder="cpx_…" aria-label="Proxy key" required>' +
       '<button type="submit">Open dashboard</button><div class="error" role="alert">' + esc(message || "") + "</div></form>";
@@ -181,7 +181,7 @@ td .dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; ma
     const t = data.totals;
     const errorShare = t.calls ? Math.round((t.errors / t.calls) * 100) : 0;
     app.innerHTML =
-      "<header><h1>cursor-proxy <span>usage</span></h1>" +
+      "<header><h1>llm-proxy <span>usage</span></h1>" +
       '<div class="seg" role="group" aria-label="Time range">' +
       ["24h", "7d", "30d"].map((r) => '<button type="button" data-range="' + r + '" aria-pressed="' + (r === range) + '">' + r + "</button>").join("") +
       '</div><div class="spacer"></div><span class="updated">updated ' + new Date().toLocaleTimeString() + "</span>" +

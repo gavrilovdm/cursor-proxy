@@ -1,11 +1,11 @@
-# cursor-proxy
+# llm-proxy
 
 An OpenAI-compatible proxy that sends chat requests to Anthropic using a Claude
 Code OAuth session instead of an Anthropic API key. It works for Cursor and for
 any OpenAI-compatible client in your own code.
 
 ```text
-client (OpenAI shape) -> cursor-proxy :8787 -> api.anthropic.com/v1/messages
+client (OpenAI shape) -> llm-proxy :8787 -> api.anthropic.com/v1/messages
                          checks the cpx_... key, converts the request, adds the OAuth token
 ```
 
@@ -30,8 +30,8 @@ steps by hand:
 Requires Node >= 22 and Claude Code logged in on this Mac.
 
 ```sh
-git clone https://github.com/gavrilovdm/cursor-proxy ~/cursor-proxy
-cd ~/cursor-proxy && npm install && npm run build
+git clone https://github.com/gavrilovdm/llm-proxy ~/llm-proxy
+cd ~/llm-proxy && npm install && npm run build
 node dist/cli.js import-claude-code   # copies the OAuth session from Keychain
 node dist/cli.js key                  # prints the cpx_... key once
 node dist/cli.js install-service      # launch agent; or `start` to run in the foreground
@@ -95,8 +95,13 @@ still answer in text, so check for the tool call or valid JSON.
 | `status [--json]` | Show what is configured, without secrets |
 | `logout` | Delete the stored tokens |
 
-State lives in `~/.cursor-proxy` (override with `CURSOR_PROXY_HOME`). Run one
+State lives in `~/.llm-proxy` (override with `LLM_PROXY_HOME`). Run one
 proxy per machine; all projects share it.
+
+The project used to be called cursor-proxy. On first start the proxy moves
+`~/.cursor-proxy` to `~/.llm-proxy` and leaves a symlink; `CURSOR_PROXY_*`
+variables still work when the `LLM_PROXY_*` one is unset; `install-service`
+removes the old `com.cursor-proxy` launch agent.
 
 ## Token usage
 
@@ -125,7 +130,7 @@ shows calls, input/output/cache tokens, latency and errors for 24 hours, 7 or
 30 days, a chart by project, a project × model table and the last 20 calls.
 It refreshes every 30 seconds.
 
-Data comes from `~/.cursor-proxy/usage.jsonl`: one line per OpenAI-format chat
+Data comes from `~/.llm-proxy/usage.jsonl`: one line per OpenAI-format chat
 call with project, model, tokens, duration and status — never prompts or keys.
 The page needs no key to load; its data API (`/dashboard/api/usage`) does.
 
@@ -137,11 +142,11 @@ metrics for every OpenAI-format chat call:
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel.example.com     # OTLP/HTTP, JSON
 OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic%20...     # if the backend needs auth
-OTEL_SERVICE_NAME=cursor-proxy                           # optional
+OTEL_SERVICE_NAME=llm-proxy                           # optional
 ```
 
 A service started by launchd or systemd does not see your shell, so the same
-lines can go in `~/.cursor-proxy/otel.env`, read at start.
+lines can go in `~/.llm-proxy/otel.env`, read at start.
 Prompts and answers are left out of spans by default: every project's prompts
 pass through this proxy, some with personal data. To see them as Input/Output in
 Langfuse, add to `otel.env`:

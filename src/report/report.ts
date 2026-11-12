@@ -72,7 +72,7 @@ export function renderTables(current: Period, previous: Period): string {
   const head =
     "| | calls | errors | input | output | cache read | cost $ | p50 ms | p95 ms |\n|---|---|---|---|---|---|---|---|---|";
   const lines = [
-    `# cursor-proxy: ${current.from.slice(0, 10)} — ${current.to.slice(0, 10)}`,
+    `# llm-proxy: ${current.from.slice(0, 10)} — ${current.to.slice(0, 10)}`,
     "",
     "Change in brackets — against the previous period of the same length.",
     "",
@@ -119,7 +119,7 @@ async function analyze(
     headers: {
       "content-type": "application/json",
       authorization: `Bearer ${llm.key}`,
-      "x-cpx-project": "cursor-proxy-report",
+      "x-cpx-project": "llm-proxy-report",
     },
     body: JSON.stringify({
       model: llm.model,

@@ -27,7 +27,7 @@ export function startTelemetry(
 
   reportExportFailures(logger);
   const sdk = new NodeSDK({
-    serviceName: process.env.OTEL_SERVICE_NAME ?? "cursor-proxy",
+    serviceName: process.env.OTEL_SERVICE_NAME ?? "llm-proxy",
     traceExporter: new OTLPTraceExporter(),
     metricReaders: [new PeriodicExportingMetricReader({ exporter: new OTLPMetricExporter() })],
     // Spans come from the proxy's own code; library auto-instrumentation would

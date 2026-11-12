@@ -8,7 +8,7 @@ import type { Credentials } from "../src/ports.js";
 const dirs: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "cursor-proxy-creds-"));
+  const dir = await mkdtemp(join(tmpdir(), "llm-proxy-creds-"));
   dirs.push(dir);
   return dir;
 }

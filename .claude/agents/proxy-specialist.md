@@ -11,7 +11,7 @@ description: >-
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-You own the HTTP forwarding path for cursor-proxy.
+You own the HTTP forwarding path for llm-proxy.
 
 ## Scope
 

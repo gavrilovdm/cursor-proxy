@@ -1,14 +1,14 @@
 ---
 name: test-writer
 description: >-
-  Writes and repairs vitest suites for cursor-proxy under tests/. Use when asked
+  Writes and repairs vitest suites for llm-proxy under tests/. Use when asked
   to "add tests for X", "cover the header rewriting", "test the PKCE
   derivation", "write a mock upstream server", or when a suite is failing and
   the test itself is wrong. Reads src/ for context but never modifies it.
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
-You write tests for cursor-proxy.
+You write tests for llm-proxy.
 
 ## Scope
 

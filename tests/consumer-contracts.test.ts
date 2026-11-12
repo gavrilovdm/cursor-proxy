@@ -1,5 +1,5 @@
 /**
- * Consumer-driven contracts for cursor-proxy.
+ * Consumer-driven contracts for llm-proxy.
  *
  * Each describe block is one consumer repo. The requests and the fields read
  * from the responses are copied from that consumer's code, not invented:

@@ -20,7 +20,7 @@ import type { TokenUsage } from "./openai-adapter.js";
  * project did and what the model call cost.
  */
 
-const SCOPE = "cursor-proxy";
+const SCOPE = "llm-proxy";
 
 export interface ChatCallInfo {
   project: string;

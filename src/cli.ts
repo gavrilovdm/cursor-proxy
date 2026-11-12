@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { ConfigError, OAuthError } from "./errors.js";
@@ -32,6 +31,7 @@ import { INSTALL_DIR, VERSION } from "./version.js";
 import * as service from "./service/launchd.js";
 import { updateCheckout } from "./service/update.js";
 import { buildReport } from "./report/report.js";
+import { resolveBaseDir } from "./home.js";
 
 /**
  * Command line entry point.
@@ -41,7 +41,7 @@ import { buildReport } from "./report/report.js";
  * values meant to be piped (the proxy key, `status --json`).
  */
 
-const BASE_DIR = process.env.CURSOR_PROXY_HOME ?? join(homedir(), ".cursor-proxy");
+const BASE_DIR = resolveBaseDir(process.env);
 
 const configStore = new FileConfigStore(BASE_DIR);
 const credentialStore = new FileCredentialStore(BASE_DIR);
@@ -49,7 +49,7 @@ const credentialStore = new FileCredentialStore(BASE_DIR);
 const program = new Command();
 
 program
-  .name("cursor-proxy")
+  .name("llm-proxy")
   .description(
     "Local Anthropic proxy backed by an OAuth session.",
   )
@@ -120,11 +120,11 @@ program
     );
     if (options.manual) {
       consoleLogger.info(
-        "Run `cursor-proxy login` again; the authorize URL should include code=true and the platform callback redirect.",
+        "Run `llm-proxy login` again; the authorize URL should include code=true and the platform callback redirect.",
       );
     } else {
       consoleLogger.info(
-        "Run `cursor-proxy login` again; the authorize URL should use a localhost callback and no code=true parameter.",
+        "Run `llm-proxy login` again; the authorize URL should use a localhost callback and no code=true parameter.",
       );
     }
   });
@@ -216,7 +216,7 @@ program
     } else {
       consoleLogger.info("Restart the proxy to load the new build.");
     }
-    consoleLogger.info(`cursor-proxy ${before} -> ${version}`);
+    consoleLogger.info(`llm-proxy ${before} -> ${version}`);
   });
 
 program
@@ -307,7 +307,7 @@ async function runProxy(
 ): Promise<void> {
   if (!config.proxyKeyHash) {
     throw new ConfigError(
-      "No proxy key configured. Run `cursor-proxy key` first.",
+      "No proxy key configured. Run `llm-proxy key` first.",
       "proxyKeyHash",
       "—",
     );
@@ -352,7 +352,7 @@ async function runProxy(
     host,
   );
 
-  consoleLogger.info(`cursor-proxy ${VERSION} listening on http://${host}:${running.port}`);
+  consoleLogger.info(`llm-proxy ${VERSION} listening on http://${host}:${running.port}`);
   consoleLogger.info(`Forwarding to ${config.upstream}`);
   consoleLogger.info(`Dashboard: http://${host}:${running.port}/dashboard`);
 

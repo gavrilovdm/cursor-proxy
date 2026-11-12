@@ -1,9 +1,9 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import type { Config, ConfigStore, OAuthConfig } from "./ports.js";
 import { ConfigError } from "./errors.js";
+import { defaultBaseDir, withLegacyEnv } from "./home.js";
 
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
@@ -75,17 +75,17 @@ export function applyClaudeCodePreset(
 
 /** Maps each overridable setting to its environment variable. */
 export const ENV_VARS = {
-  clientId: "CURSOR_PROXY_CLIENT_ID",
-  clientSecret: "CURSOR_PROXY_CLIENT_SECRET",
-  issuer: "CURSOR_PROXY_ISSUER",
-  authorizationEndpoint: "CURSOR_PROXY_AUTH_ENDPOINT",
-  tokenEndpoint: "CURSOR_PROXY_TOKEN_ENDPOINT",
-  redirectUri: "CURSOR_PROXY_REDIRECT_URI",
-  scope: "CURSOR_PROXY_SCOPE",
-  authParams: "CURSOR_PROXY_AUTH_PARAMS",
-  tokenRequestFormat: "CURSOR_PROXY_TOKEN_FORMAT",
-  port: "CURSOR_PROXY_PORT",
-  upstream: "CURSOR_PROXY_UPSTREAM",
+  clientId: "LLM_PROXY_CLIENT_ID",
+  clientSecret: "LLM_PROXY_CLIENT_SECRET",
+  issuer: "LLM_PROXY_ISSUER",
+  authorizationEndpoint: "LLM_PROXY_AUTH_ENDPOINT",
+  tokenEndpoint: "LLM_PROXY_TOKEN_ENDPOINT",
+  redirectUri: "LLM_PROXY_REDIRECT_URI",
+  scope: "LLM_PROXY_SCOPE",
+  authParams: "LLM_PROXY_AUTH_PARAMS",
+  tokenRequestFormat: "LLM_PROXY_TOKEN_FORMAT",
+  port: "LLM_PROXY_PORT",
+  upstream: "LLM_PROXY_UPSTREAM",
 } as const;
 
 /**
@@ -223,8 +223,8 @@ export class FileConfigStore implements ConfigStore {
   private readonly path: string;
 
   constructor(
-    private readonly baseDir: string = join(homedir(), ".cursor-proxy"),
-    private readonly env: Record<string, string | undefined> = process.env,
+    private readonly baseDir: string = defaultBaseDir(),
+    private readonly env: Record<string, string | undefined> = withLegacyEnv(process.env),
   ) {
     this.path = join(baseDir, "config.json");
   }

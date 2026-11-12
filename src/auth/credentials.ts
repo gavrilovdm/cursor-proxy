@@ -1,8 +1,8 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { readFile, unlink } from "node:fs/promises";
 import type { CredentialStore, Credentials } from "../ports.js";
 import { ensureDir, isNotFound, writeFileAtomic } from "../config.js";
+import { defaultBaseDir } from "../home.js";
 
 /**
  * OAuth tokens on disk.
@@ -40,7 +40,7 @@ export class FileCredentialStore implements CredentialStore {
   private readonly path: string;
 
   constructor(
-    private readonly baseDir: string = join(homedir(), ".cursor-proxy"),
+    private readonly baseDir: string = defaultBaseDir(),
   ) {
     this.path = join(baseDir, FILE_NAME);
   }
