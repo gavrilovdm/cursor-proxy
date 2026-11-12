@@ -4,14 +4,14 @@ import { LABEL, renderPlist } from "../src/service/launchd.js";
 describe("launch agent plist", () => {
   const plist = renderPlist({
     node: "/opt/homebrew/bin/node",
-    cli: "/Users/me/cursor-proxy/dist/cli.js",
-    log: "/Users/me/.cursor-proxy/logs/proxy.log",
+    cli: "/Users/me/llm-proxy/dist/cli.js",
+    log: "/Users/me/.llm-proxy/logs/proxy.log",
   });
 
   it("runs `start` with absolute paths", () => {
     expect(plist).toContain(`<string>${LABEL}</string>`);
     expect(plist).toContain("<string>/opt/homebrew/bin/node</string>");
-    expect(plist).toContain("<string>/Users/me/cursor-proxy/dist/cli.js</string>");
+    expect(plist).toContain("<string>/Users/me/llm-proxy/dist/cli.js</string>");
     expect(plist).toContain("<string>start</string>");
   });
 

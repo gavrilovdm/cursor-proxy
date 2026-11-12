@@ -18,7 +18,7 @@ import { ConfigError } from "../src/errors.js";
 const tempDirs: string[] = [];
 
 async function makeTempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "cursor-proxy-test-"));
+  const dir = await mkdtemp(join(tmpdir(), "llm-proxy-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -82,7 +82,7 @@ describe("applyEnvOverrides", () => {
 
     const result = applyEnvOverrides(config, {
       proxyKeyHash: "injected",
-      CURSOR_PROXY_PROXY_KEY_HASH: "injected",
+      LLM_PROXY_PROXY_KEY_HASH: "injected",
     });
 
     expect(result.proxyKeyHash).toBe("abc");

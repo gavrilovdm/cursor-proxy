@@ -1,14 +1,14 @@
-# cursor-proxy: setup instructions for an agent
+# llm-proxy: setup instructions for an agent
 
 Give this file to a coding agent (Claude Code, Cursor agent, and so on) with a
-request such as "Install cursor-proxy following AGENT_SETUP.md, part A" or
+request such as "Install llm-proxy following AGENT_SETUP.md, part A" or
 "...part B on this server, then part C for project X". Part A is a local Mac,
 part B is a Linux server, part C connects a project to an installed proxy.
 
 ## Rules for the agent
 
 - Never print, log, or commit the `cpx_...` key or the files in
-  `~/.cursor-proxy/`. `node dist/cli.js key` prints the key once: show it to
+  `~/.llm-proxy/`. `node dist/cli.js key` prints the key once: show it to
   the user and save it only where they say (a `.env` file that git ignores, a
   secret manager, or Cursor settings).
 - Check that a step worked before going to the next one. The check is given
@@ -32,8 +32,8 @@ only works while your laptop is on.
    to log in.
 2. **Install.**
    ```sh
-   git clone https://github.com/gavrilovdm/cursor-proxy ~/cursor-proxy
-   cd ~/cursor-proxy && npm install && npm run build
+   git clone https://github.com/gavrilovdm/llm-proxy ~/llm-proxy
+   cd ~/llm-proxy && npm install && npm run build
    ```
    Check: `ls dist/cli.js`.
 3. **Session and key.**
@@ -45,7 +45,7 @@ only works while your laptop is on.
    `proxyKeyConfigured true`.
 4. **Run as a service** (starts at login, restarts if it dies):
    ```sh
-   node dist/cli.js install-service   # log: ~/.cursor-proxy/logs/proxy.log
+   node dist/cli.js install-service   # log: ~/.llm-proxy/logs/proxy.log
    ```
    Check: `curl -s http://127.0.0.1:8787/healthz` returns `"status":"ok"`.
 5. **Public URL (only needed for Cursor).** `ngrok http 8787`, then use the
@@ -70,19 +70,19 @@ Mac. Nothing keeps it in sync after that.
    closed.
 2. **Install as a dedicated user:**
    ```sh
-   sudo useradd --system --create-home --shell /usr/sbin/nologin cursorproxy
-   sudo -u cursorproxy git clone https://github.com/gavrilovdm/cursor-proxy /home/cursorproxy/cursor-proxy
-   cd /home/cursorproxy/cursor-proxy && sudo -u cursorproxy sh -c 'npm ci && npm run build'
+   sudo useradd --system --create-home --shell /usr/sbin/nologin llmproxy
+   sudo -u llmproxy git clone https://github.com/gavrilovdm/llm-proxy /home/llmproxy/llm-proxy
+   cd /home/llmproxy/llm-proxy && sudo -u llmproxy sh -c 'npm ci && npm run build'
    ```
 3. **Copy the session from a Mac.** On the Mac, run part A steps 1–3 if that
    has not been done, then:
    ```sh
-   scp ~/.cursor-proxy/config.json ~/.cursor-proxy/credentials.json <server>:/tmp/
+   scp ~/.llm-proxy/config.json ~/.llm-proxy/credentials.json <server>:/tmp/
    ```
    On the server:
    ```sh
-   sudo install -d -m 700 -o cursorproxy /home/cursorproxy/.cursor-proxy
-   sudo install -m 600 -o cursorproxy /tmp/config.json /tmp/credentials.json /home/cursorproxy/.cursor-proxy/
+   sudo install -d -m 700 -o llmproxy /home/llmproxy/.llm-proxy
+   sudo install -m 600 -o llmproxy /tmp/config.json /tmp/credentials.json /home/llmproxy/.llm-proxy/
    rm /tmp/config.json /tmp/credentials.json
    ```
    The session has one rotating refresh token. Whichever side refreshes it
@@ -93,27 +93,27 @@ Mac. Nothing keeps it in sync after that.
    step.
 
    Fallback without a Mac (marked experimental in the README): on the server,
-   run `sudo -u cursorproxy node dist/cli.js configure claude-code --manual`,
-   then `sudo -u cursorproxy node dist/cli.js login`. Open the printed URL in
+   run `sudo -u llmproxy node dist/cli.js configure claude-code --manual`,
+   then `sudo -u llmproxy node dist/cli.js login`. Open the printed URL in
    any browser, then paste the callback URL or the `code#state` value it shows
    back into the terminal.
 4. **Key.**
    ```sh
-   cd /home/cursorproxy/cursor-proxy && sudo -u cursorproxy node dist/cli.js key
+   cd /home/llmproxy/llm-proxy && sudo -u llmproxy node dist/cli.js key
    ```
    Give the key to the user.
-   Check: `sudo -u cursorproxy node dist/cli.js status` shows `loggedIn true`
+   Check: `sudo -u llmproxy node dist/cli.js status` shows `loggedIn true`
    and `proxyKeyConfigured true`.
-5. **systemd service.** Create `/etc/systemd/system/cursor-proxy.service`:
+5. **systemd service.** Create `/etc/systemd/system/llm-proxy.service`:
    ```ini
    [Unit]
-   Description=cursor-proxy
+   Description=llm-proxy
    After=network-online.target
    Wants=network-online.target
 
    [Service]
-   User=cursorproxy
-   WorkingDirectory=/home/cursorproxy/cursor-proxy
+   User=llmproxy
+   WorkingDirectory=/home/llmproxy/llm-proxy
    ExecStart=/usr/bin/env node dist/cli.js start --host 127.0.0.1 --port 8787
    Restart=always
    RestartSec=5
@@ -122,10 +122,10 @@ Mac. Nothing keeps it in sync after that.
    WantedBy=multi-user.target
    ```
    ```sh
-   sudo systemctl daemon-reload && sudo systemctl enable --now cursor-proxy
+   sudo systemctl daemon-reload && sudo systemctl enable --now llm-proxy
    ```
    Check: `curl -s http://127.0.0.1:8787/healthz` returns `"status":"ok"`.
-   Logs: `journalctl -u cursor-proxy -f`.
+   Logs: `journalctl -u llm-proxy -f`.
 6. **HTTPS with Caddy** (it gets the certificate automatically). Install Caddy
    following caddyserver.com/docs/install, then write `/etc/caddy/Caddyfile`:
    ```text
@@ -146,7 +146,7 @@ Mac. Nothing keeps it in sync after that.
    URL, which has the same problem as ngrok and is not suitable for a server.
 7. **Update:**
    ```sh
-   cd /home/cursorproxy/cursor-proxy && sudo -u cursorproxy node dist/cli.js update && sudo systemctl restart cursor-proxy
+   cd /home/llmproxy/llm-proxy && sudo -u llmproxy node dist/cli.js update && sudo systemctl restart llm-proxy
    ```
 
 ## Part C. Connecting a project
@@ -194,5 +194,5 @@ Ask the user to do this (it is in Cursor's settings UI, Settings -> Models):
    part A or the domain from part B. `127.0.0.1` does not work in Cursor.
 3. Add the models `cpxopus`, `cpxsonnet` and `cpxhaiku`, then pick one in chat.
 4. Check: a chat message adds `chat model=cpx... ` and `-> 200` lines to the
-   proxy log (`~/.cursor-proxy/logs/proxy.log` or `journalctl -u cursor-proxy`).
+   proxy log (`~/.llm-proxy/logs/proxy.log` or `journalctl -u llm-proxy`).
    If the log does not change, Cursor did not use the proxy.

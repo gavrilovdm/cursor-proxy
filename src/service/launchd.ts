@@ -12,7 +12,10 @@ import { promisify } from "node:util";
  * for one port. One agent, owned by the proxy, serves every project.
  */
 
-export const LABEL = "com.cursor-proxy";
+export const LABEL = "com.llm-proxy";
+
+/** Label used before the rename to llm-proxy; `install` removes that agent. */
+export const LEGACY_LABEL = "com.cursor-proxy";
 
 const run = promisify(execFile);
 
@@ -25,8 +28,8 @@ export interface ServicePaths {
   log: string;
 }
 
-export function plistPath(home = homedir()): string {
-  return join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
+export function plistPath(home = homedir(), label = LABEL): string {
+  return join(home, "Library", "LaunchAgents", `${label}.plist`);
 }
 
 export function renderPlist(paths: ServicePaths): string {
@@ -83,18 +86,18 @@ async function launchctl(...args: string[]): Promise<{ ok: boolean; stdout: stri
   }
 }
 
-export async function isInstalled(): Promise<boolean> {
-  return (await launchctl("print", `${domain()}/${LABEL}`)).ok;
+export async function isInstalled(label = LABEL): Promise<boolean> {
+  return (await launchctl("print", `${domain()}/${label}`)).ok;
 }
 
 /**
  * `bootout` returns before the process exits, and an immediate `bootstrap`
  * then fails with "5: Input/output error" — seen when reinstalling.
  */
-async function unload(): Promise<void> {
-  await launchctl("bootout", `${domain()}/${LABEL}`);
+async function unload(label = LABEL): Promise<void> {
+  await launchctl("bootout", `${domain()}/${label}`);
   const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline && (await isInstalled())) {
+  while (Date.now() < deadline && (await isInstalled(label))) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
@@ -104,6 +107,8 @@ export async function install(paths: ServicePaths): Promise<void> {
   const path = plistPath();
   await mkdir(join(homedir(), "Library", "LaunchAgents"), { recursive: true });
   await mkdir(join(paths.log, ".."), { recursive: true });
+  await unload(LEGACY_LABEL);
+  await unlink(plistPath(homedir(), LEGACY_LABEL)).catch(() => undefined);
   await unload();
   await writeFile(path, renderPlist(paths));
   const result = await launchctl("bootstrap", domain(), path);

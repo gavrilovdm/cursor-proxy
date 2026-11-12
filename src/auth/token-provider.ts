@@ -81,7 +81,7 @@ export class RefreshingTokenProvider implements TokenProvider {
     const loaded = await this.options.store.load();
     if (!loaded) {
       throw new OAuthError(
-        "Not logged in. Run `cursor-proxy import-claude-code` or `cursor-proxy login` first.",
+        "Not logged in. Run `llm-proxy import-claude-code` or `llm-proxy login` first.",
         "login_required",
       );
     }
@@ -94,7 +94,7 @@ export class RefreshingTokenProvider implements TokenProvider {
 
     if (!current.refreshToken) {
       throw new OAuthError(
-        "Access token expired and no refresh token is available. Run `cursor-proxy import-claude-code` or `cursor-proxy login` again.",
+        "Access token expired and no refresh token is available. Run `llm-proxy import-claude-code` or `llm-proxy login` again.",
         "login_required",
       );
     }
@@ -133,7 +133,7 @@ export class RefreshingTokenProvider implements TokenProvider {
         this.cached = null;
         await this.options.store.clear();
         throw new OAuthError(
-          "Session expired. Run `cursor-proxy import-claude-code` or `cursor-proxy login` again.",
+          "Session expired. Run `llm-proxy import-claude-code` or `llm-proxy login` again.",
           "login_required",
         );
       }

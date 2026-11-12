@@ -119,7 +119,7 @@ async function handle(
       response,
       401,
       "authentication_error",
-      "No proxy key configured. Run `cursor-proxy key` to mint one.",
+      "No proxy key configured. Run `llm-proxy key` to mint one.",
     );
     return;
   }

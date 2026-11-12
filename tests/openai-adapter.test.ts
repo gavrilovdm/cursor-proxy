@@ -32,7 +32,7 @@ describe("OpenAI adapter request translation", () => {
         {
           role: "tool",
           tool_call_id: "call_read",
-          content: "{\"name\":\"cursor-proxy\"}",
+          content: "{\"name\":\"llm-proxy\"}",
         },
       ],
       tools: [
@@ -94,7 +94,7 @@ describe("OpenAI adapter request translation", () => {
             {
               type: "tool_result",
               tool_use_id: "call_read",
-              content: "{\"name\":\"cursor-proxy\"}",
+              content: "{\"name\":\"llm-proxy\"}",
             },
           ],
         },

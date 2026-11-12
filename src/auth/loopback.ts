@@ -146,7 +146,7 @@ function respond(
   status: number,
   message: string,
 ): void {
-  const body = `<!doctype html><meta charset="utf-8"><title>cursor-proxy</title><p style="font:16px system-ui;padding:2rem">${message}</p>`;
+  const body = `<!doctype html><meta charset="utf-8"><title>llm-proxy</title><p style="font:16px system-ui;padding:2rem">${message}</p>`;
   response.writeHead(status, {
     "content-type": "text/html; charset=utf-8",
     "content-length": Buffer.byteLength(body),

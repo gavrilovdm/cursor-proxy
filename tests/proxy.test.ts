@@ -96,7 +96,7 @@ describe("proxy authentication", () => {
     });
 
     expect(response.status).toBe(401);
-    expect((await response.json()).error.message).toMatch(/cursor-proxy key/);
+    expect((await response.json()).error.message).toMatch(/llm-proxy key/);
   });
 
   it("answers /healthz without a key", async () => {

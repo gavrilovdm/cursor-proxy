@@ -10,7 +10,7 @@ description: >-
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
-You own authentication and credential handling for cursor-proxy.
+You own authentication and credential handling for llm-proxy.
 
 ## Scope
 
@@ -29,7 +29,7 @@ Do not edit `src/proxy/**` or `tests/**`. If a change there is needed, say so an
    fail loudly with a message naming the exact config key and env var. Do not
    invent a default and do not fall back to a known public client id.
 2. **Never write a plaintext secret to disk.** Access and refresh tokens go to
-   `~/.cursor-proxy/credentials.json` at mode `0600` in a directory at `0700`.
+   `~/.llm-proxy/credentials.json` at mode `0600` in a directory at `0700`.
    The proxy key is never persisted — only `sha256(key)` is.
 3. **Never log a token, a refresh token, an authorization code, or a proxy
    key**, even at debug level, even truncated.
