@@ -9,6 +9,70 @@ import {
 } from "../src/proxy/openai-adapter.js";
 
 describe("OpenAI adapter request translation", () => {
+  it("passes user images to Anthropic in the order they were sent", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Compare the mockup with the screenshot." },
+            { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+            { type: "image_url", image_url: { url: "https://example.com/shot.jpg" } },
+          ],
+        },
+      ],
+    }) as { messages: { role: string; content: unknown[] }[] };
+
+    expect(request.messages[0]?.content.slice(-3)).toEqual([
+      { type: "text", text: "Compare the mockup with the screenshot." },
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+      { type: "image", source: { type: "url", url: "https://example.com/shot.jpg" } },
+    ]);
+  });
+
+  it("keeps a user turn that holds only an image", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/webp;base64,BBBB" } }] },
+      ],
+    }) as { messages: { role: string; content: unknown[] }[] };
+
+    expect(request.messages).toHaveLength(1);
+    expect(request.messages[0]?.content).toContainEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/webp", data: "BBBB" },
+    });
+  });
+
+  it("accepts the short form where image_url is the URL itself", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [{ role: "user", content: [{ type: "image_url", image_url: "data:image/jpeg;base64,CCCC" }] }],
+    }) as { messages: { content: unknown[] }[] };
+
+    expect(request.messages[0]?.content).toContainEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: "CCCC" },
+    });
+  });
+
+  it("does not put images into assistant turns or the system text", () => {
+    const request = toAnthropicMessagesRequest({
+      model: "cpxopus",
+      messages: [
+        { role: "system", content: [{ type: "text", text: "Be brief." }, { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: [{ type: "text", text: "hello" }, { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] },
+        { role: "user", content: "bye" },
+      ],
+    }) as { messages: { role: string; content: { type: string }[] }[] };
+
+    const images = request.messages.flatMap((m) => m.content).filter((block) => block.type === "image");
+    expect(images).toEqual([]);
+  });
+
   it("maps OpenAI tools and tool messages to Anthropic", () => {
     const request = toAnthropicMessagesRequest({
       model: "cpxopus",

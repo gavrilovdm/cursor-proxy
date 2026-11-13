@@ -7,6 +7,7 @@
  *   job-agent       src/job_agent/llm.py, src/job_agent/bot.py
  *   ai-agent-layer  src/ai_agent_layer/llm.py
  *   gavrisalive     server/services.ts
+ *   landing-factory packages/core/src/generate/llm.ts
  * The upstream (Anthropic) is a stub, so nothing leaves the machine.
  */
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,7 +24,11 @@ afterEach(async () => {
   await running?.close();
   running = null;
   logLines.length = 0;
+  lastUpstreamBody = null;
 });
+
+/** The last body the fake upstream received, for contracts about what must reach the model. */
+let lastUpstreamBody: { messages?: { role: string; content: unknown[] }[] } | null = null;
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
@@ -44,7 +49,9 @@ async function fakeAnthropic(request: Request): Promise<Response> {
   const body = (await request.json()) as {
     stream?: boolean;
     tools?: { name: string }[];
+    messages?: { role: string; content: unknown[] }[];
   };
+  lastUpstreamBody = body;
   const usage = { input_tokens: 10, output_tokens: 5 };
   if (body.stream) {
     return sse([
@@ -184,5 +191,43 @@ describe("contract: gavrisalive", () => {
     const base = await start();
     await post(base, "/v1/chat/completions", { model: "claude-opus-5", messages: [{ role: "user", content: "hi" }] }, "gavrisalive");
     expect(logLines.some((l) => l.includes("usage project=gavrisalive"))).toBe(true);
+  });
+});
+
+describe("contract: landing-factory", () => {
+  it("forced tool_choice → arguments string, usage attributed to the project", async () => {
+    const base = await start();
+    await expectToolArgumentsString(
+      await post(base, "/v1/chat/completions", forcedTool("write_landing_spec"), "landing-factory"),
+    );
+    expect(logLines.some((l) => l.includes("usage project=landing-factory"))).toBe(true);
+  });
+
+  it("a mockup sent as an image_url data URL reaches the model as an image", async () => {
+    const base = await start();
+    const r = await post(
+      base,
+      "/v1/chat/completions",
+      {
+        model: "cpxopus",
+        max_tokens: 16000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Build the page from this mockup." },
+              { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+            ],
+          },
+        ],
+      },
+      "landing-factory",
+    );
+    expect(r.status).toBe(200);
+    expect(typeof ((await r.json()) as any).choices[0].message.content).toBe("string");
+    expect(lastUpstreamBody?.messages?.flatMap((m) => m.content)).toContainEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "AAAA" },
+    });
   });
 });

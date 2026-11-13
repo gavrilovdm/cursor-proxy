@@ -166,8 +166,13 @@ type AnthropicMessage = {
   content: AnthropicRequestContent[];
 };
 
+type AnthropicImageSource =
+  | { type: "base64"; media_type: string; data: string }
+  | { type: "url"; url: string };
+
 type AnthropicRequestContent =
   | { type: "text"; text: string }
+  | { type: "image"; source: AnthropicImageSource }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
@@ -609,8 +614,22 @@ function toAnthropicContentBlocks(
   const content: AnthropicRequestContent[] = [];
   // Empty text becomes an empty text block, which Anthropic rejects with 400
   // "text content blocks must be non-empty" — typical next to tool_calls.
-  for (const text of openAiContentToTextParts(message.content)) {
-    if (text) content.push({ type: "text", text });
+  // Images are an input: Anthropic takes them only in user turns.
+  if (message.role === "user" && Array.isArray(message.content)) {
+    for (const part of message.content) {
+      const image = toAnthropicImage(part);
+      if (image) {
+        content.push(image);
+        continue;
+      }
+      for (const text of openAiContentToTextParts([part])) {
+        if (text) content.push({ type: "text", text });
+      }
+    }
+  } else {
+    for (const text of openAiContentToTextParts(message.content)) {
+      if (text) content.push({ type: "text", text });
+    }
   }
   for (const toolCall of message.tool_calls ?? []) {
     const name = toolCall.function?.name;
@@ -730,6 +749,30 @@ function hasToolInput(input: unknown): boolean {
   if (input === undefined || input === null) return false;
   if (typeof input !== "object") return true;
   return Object.keys(input).length > 0;
+}
+
+/**
+ * Turns an OpenAI `image_url` part into an Anthropic image block. A data URL becomes a base64 source,
+ * anything else is passed as a URL source, so an unsupported image gets Anthropic's own 400 instead of
+ * silently vanishing from the request.
+ */
+function toAnthropicImage(part: unknown): AnthropicRequestContent | null {
+  if (typeof part !== "object" || part === null) return null;
+  const source = part as Record<string, unknown>;
+  if (source.type !== "image_url") return null;
+  const imageUrl = source.image_url;
+  const url =
+    typeof imageUrl === "string"
+      ? imageUrl
+      : typeof imageUrl === "object" && imageUrl !== null
+        ? (imageUrl as Record<string, unknown>).url
+        : undefined;
+  if (typeof url !== "string" || !url) return null;
+  const data = /^data:([\w/+.-]+);base64,(.+)$/s.exec(url);
+  if (data) {
+    return { type: "image", source: { type: "base64", media_type: data[1]!, data: data[2]! } };
+  }
+  return { type: "image", source: { type: "url", url } };
 }
 
 function stringifyOpenAiContent(content: unknown): string {
