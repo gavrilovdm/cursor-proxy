@@ -79,6 +79,10 @@ Claude 5 and later models, empty text blocks are removed, and `response_format`
 becomes a forced tool whose arguments are returned as `message.content`. These
 need version >= 0.2.0; check `GET /healthz` when your project starts.
 
+Images work from version 0.5.0: an `image_url` part in a user message (a
+`data:` URL or an https link) reaches the model as an image, in the order sent.
+Images in `system` and `assistant` messages are not passed.
+
 `claude-sonnet-5-5` refuses forced tool calls, so there the proxy sends
 `tool_choice: auto` and asks for the tool in the first user turn. The model can
 still answer in text, so check for the tool call or valid JSON.

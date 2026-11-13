@@ -2,7 +2,7 @@
 
 Родитель: [hub/projects/non-work/agents-ai](https://github.com/gavrilovdm/hub/blob/main/domains/projects/non-work/agents-ai/AGENTS.md)
 
-Связи: через него ходят в LLM [ai-agent-layer](https://github.com/gavrilovdm/ai-agent-layer), [vacancy-parser](https://github.com/gavrilovdm/vacancy-parser), [job-agent](https://github.com/gavrilovdm/job-agent) и [gavrisalive](https://github.com/gavrilovdm/gavrisalive) (`127.0.0.1:8787`); что каждый из них ждёт от прокси — `tests/consumer-contracts.test.ts`
+Связи: через него ходят в LLM [ai-agent-layer](https://github.com/gavrilovdm/ai-agent-layer), [vacancy-parser](https://github.com/gavrilovdm/vacancy-parser), [job-agent](https://github.com/gavrilovdm/job-agent), [gavrisalive](https://github.com/gavrilovdm/gavrisalive) и [landing-factory](https://github.com/gavrilovdm/landing-factory) (`127.0.0.1:8787`); что каждый из них ждёт от прокси — `tests/consumer-contracts.test.ts`
 
 ## Что это
 
@@ -26,7 +26,7 @@ npm start                # scripts/up.sh: недостающие шаги (insta
 - `src/proxy/` — HTTP-сервер и маршрутизация; `telemetry.ts` — спан и метрики OpenTelemetry на каждый чат-запрос (только API, без SDK — no-op)
 - `src/dashboard/` — дашборд `/dashboard`: `usage-file.ts` (журнал вызовов `~/.llm-proxy/usage.jsonl`), `aggregate.ts` (сводка для страницы), `routes.ts` (страница без ключа, API с ключом), `page.ts` (сама страница, без внешних запросов)
 - `src/telemetry-sdk.ts` — включает экспорт OTLP в `start`, если задан `OTEL_EXPORTER_OTLP_ENDPOINT` (или в `~/.llm-proxy/otel.env`)
-- `src/adapters.ts` — конвертация OpenAI ↔ Anthropic
+- `src/adapters.ts` — конвертация OpenAI ↔ Anthropic; картинки (`image_url`) из user-сообщений уходят в Anthropic блоком `image` (`proxy/openai-adapter.ts`)
 - `src/auth/`, `src/keys.ts` — OAuth-сессия и ключи `cpx_`; redirect URI логина — `http://localhost:<порт>/callback` (Anthropic не принимает `127.0.0.1`), слушаем при этом только `127.0.0.1`
 - `src/home.ts` — каталог состояния `~/.llm-proxy`; переносит `~/.cursor-proxy` (старое имя проекта) и читает `CURSOR_PROXY_*` как запасные `LLM_PROXY_*`
 - `src/service/` — launchd (`com.llm-proxy`; старый `com.cursor-proxy` снимается при `install-service`) / systemd
